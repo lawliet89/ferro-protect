@@ -49,11 +49,25 @@ where
     emit(&mut lock, value, json, render_human)
 }
 
-/// Render a list of rows as a human table.
+/// Render a list of rows as a human-readable table.
+///
+/// Callers are expected to short-circuit empty lists with their own
+/// "(no foo)" string; this helper assumes there is at least one row
+/// worth tabulating.
 #[must_use]
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let mut table = Table::new();
-    // Use UTF-8 borders for human-readable terminal output.
+    // `UTF8_FULL` over the other comfy-table presets: terminal users get
+    // visible row/column separation without depending on terminal-specific
+    // styling. `ASCII_MARKDOWN` would be nicer for copy-paste into docs but
+    // worse at the keyboard; `NOTHING` collapses to spaces which is too
+    // close to our old hand-rolled output to be worth the dep. Revisit if
+    // a real workflow argues for switching.
+    //
+    // `ContentArrangement::Dynamic` fits the table to the detected terminal
+    // width, wrapping long cells. Behaviour change from the old renderer,
+    // which never truncated -- if a user reports surprise wrapping on
+    // narrow terminals, swap to `ContentArrangement::Disabled`.
     table
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
@@ -66,7 +80,50 @@ pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     format!("{table}\n")
 }
 
+/// Render an optional `Display`-able value as a string, using the empty
+/// string when `None`. Used by entity renderers for optional fields like
+/// `Camera::name` so each call site stays one expression long.
 #[must_use]
 pub fn display_optional<T: Display>(value: Option<&T>) -> String {
     value.map(ToString::to_string).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_optional, table};
+
+    #[test]
+    fn table_renders_headers_and_cells() {
+        let out = table(
+            &["ID", "NAME"],
+            &[
+                vec!["cam-1".into(), "Front Door".into()],
+                vec!["cam-2".into(), "Backyard".into()],
+            ],
+        );
+
+        assert!(out.contains("ID"), "header missing: {out}");
+        assert!(out.contains("NAME"), "header missing: {out}");
+        assert!(out.contains("cam-1"), "cell missing: {out}");
+        assert!(out.contains("Front Door"), "cell missing: {out}");
+        assert!(out.contains("Backyard"), "cell missing: {out}");
+        // UTF8_FULL preset uses box-drawing characters; assert one is
+        // present so a future preset swap is a deliberate test failure.
+        assert!(
+            out.contains('─'),
+            "expected UTF8_FULL border char in output: {out}"
+        );
+        assert!(out.ends_with('\n'), "missing trailing newline: {out:?}");
+    }
+
+    #[test]
+    fn display_optional_some_renders_value() {
+        let name = String::from("Front Door");
+        assert_eq!(display_optional(Some(&name)), "Front Door");
+    }
+
+    #[test]
+    fn display_optional_none_renders_empty() {
+        assert_eq!(display_optional::<String>(None), "");
+    }
 }
