@@ -544,3 +544,48 @@ mistake in the quick check was inspecting the wrong field.
 
 **Next**: Continue phase 4 work. No code action on this rule until
 the trigger fires.
+
+## 2026-05-17 16:55 +0800 — Chore: rename cargo feature `dangerous-tls` → `insecure-tls`
+
+**Status**: complete
+
+**Summary**:
+Renamed the library's opt-in TLS-relaxation cargo feature from
+`dangerous-tls` to `insecure-tls`. The new name lines up with the
+CLI's `--insecure` flag (and `UNIFI_PROTECT_INSECURE` env var), so a
+reader following the call chain from `--insecure` through the
+builder to `TlsMode::AcceptInvalid` no longer has to context-switch
+between two vocabularies for the same concept. No behaviour change.
+
+**Files added/changed**:
+- `crates/ferro-protect/Cargo.toml` (`[features]` rename)
+- `crates/ferro-protect-cli/Cargo.toml` (feature-flag passthrough)
+- `crates/ferro-protect/src/client.rs` (`#[cfg(feature = ...)]`
+  gates and the `TlsMode` doc comment)
+- `crates/ferro-protect/tests/common/mod.rs` (`#[cfg]` gates plus
+  the panic-message text suggesting how to re-run)
+- `crates/ferro-protect/build_support/spec_rewrite.rs` (one in-doc
+  reference in the audio-detection rule's retirement test
+  instructions)
+- `scripts/live-test` (`--features insecure-tls` invocation)
+- `README.md`, `ARCHITECTURE.md`, `PLAN.md`, `AGENT.md` (user-
+  facing references)
+- `PROGRESS.md` (this entry)
+
+**Decisions / deviations**:
+- Historical PROGRESS.md mentions of `dangerous-tls` (the Phase 2
+  entry, lines around 172/206/209) are left intact. PROGRESS.md is
+  a chronological log of what was decided at each point in time;
+  the feature genuinely was named `dangerous-tls` until this
+  chore. Editing those lines would falsify history. This entry is
+  the canonical record of the rename.
+- No deprecation alias for the old name. The library is pre-0.1.0
+  with no published consumers; carrying a `dangerous-tls`
+  passthrough feature would just be permanent dead weight.
+- Verified by full grep across `.rs`, `.toml`, `.md`, `.yml`,
+  `.sh`, `.github/`, `.env.example`, `docs/`, `UPGRADING.md`,
+  `CHANGELOG.md` — no surviving `dangerous-tls` outside the
+  intentional PROGRESS.md historical entries. All four gates
+  green.
+
+**Next**: Phase 4c (lights read endpoints).

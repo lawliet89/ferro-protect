@@ -150,11 +150,8 @@ fn drop_enum_with_collision_prone_variants(map: &mut serde_json::Map<String, ser
 /// Confirmed still required against firmware 7.1.60 in 2026-05 (see
 /// PROGRESS.md "Investigated retiring drop_drifted_audio_detection_enum").
 /// If you want to retry retiring this rule on a future firmware: comment
-/// out the call site in `descend()`, then run the relevant live camera
-/// test(s), for example
-/// `cargo test --features dangerous-tls -p ferro-protect --test live live_read_cameras_list`
-/// and/or
-/// `cargo test --features dangerous-tls -p ferro-protect --test live live_read_cameras_get`
+/// out the call site in `descend()`, run
+/// `cargo test --features insecure-tls -p ferro-protect --test live live_read_cameras_list`
 /// against a real NVR, and check that no camera fails with
 /// `unknown variant 'smoke_cmonx'`. Look in the cameras of users who have
 /// historically configured smart-audio detection -- newly-added cameras

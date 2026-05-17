@@ -179,14 +179,14 @@ The current state. Updated whenever the structure changes.
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | fmt → clippy → test → deny. Refuses to run if `UNIFI_PROTECT_*` env vars are present. |
 | [scripts/pre-commit](scripts/pre-commit) | Local hook: fmt + clippy. |
 | [scripts/update-spec](scripts/update-spec) | One-command spec version bump. |
-| [scripts/live-test](scripts/live-test) | Sources `.env.local`, runs the live integration tests with `--features dangerous-tls`. |
+| [scripts/live-test](scripts/live-test) | Sources `.env.local`, runs the live integration tests with `--features insecure-tls`. |
 | [.env.example](.env.example) | Template for `UNIFI_PROTECT_*` vars. |
 
 ### `crates/ferro-protect/` (library)
 
 | Path | What |
 |---|---|
-| [Cargo.toml](crates/ferro-protect/Cargo.toml) | Library manifest. `[features] dangerous-tls = []` for opt-in insecure TLS. |
+| [Cargo.toml](crates/ferro-protect/Cargo.toml) | Library manifest. `[features] insecure-tls = []` for opt-in insecure TLS. |
 | [build.rs](crates/ferro-protect/build.rs) | Codegen entry point. Holds `SPEC_VERSION`. Delegates rewrite to `build_support/spec_rewrite.rs`. |
 | [build_support/spec_rewrite.rs](crates/ferro-protect/build_support/spec_rewrite.rs) | Pure schema preprocessing pipeline. `pub fn rewrite(serde_json::Value) -> serde_json::Value`. |
 | [src/lib.rs](crates/ferro-protect/src/lib.rs) | Crate root. Module declarations, public re-exports, quickstart doctest. |
@@ -207,7 +207,7 @@ The current state. Updated whenever the structure changes.
 
 | Path | What |
 |---|---|
-| [Cargo.toml](crates/ferro-protect-cli/Cargo.toml) | CLI manifest. Depends on `ferro-protect` with `dangerous-tls` enabled (so `--insecure` works). |
+| [Cargo.toml](crates/ferro-protect-cli/Cargo.toml) | CLI manifest. Depends on `ferro-protect` with `insecure-tls` enabled (so `--insecure` works). |
 | [src/main.rs](crates/ferro-protect-cli/src/main.rs) | `clap`-derive CLI. Global args (`--host`, `--api-key-file`, `--insecure`, `--json`, `--log-level`) + subcommands (`info`, `cameras`, `chimes`, …). |
 | [src/lib.rs](crates/ferro-protect-cli/src/lib.rs) | Library half so integration tests can reach internals (`api_key`, `commands`, `output`, `logging`). |
 | [src/api_key.rs](crates/ferro-protect-cli/src/api_key.rs) | Resolver with `--api-key-file` > `UNIFI_PROTECT_API_KEY_FILE` > `UNIFI_PROTECT_API_KEY` precedence; injects warnings through an `io::Write` so callers can capture or stream them. |
@@ -263,7 +263,7 @@ Three TLS modes ([`TlsMode`](crates/ferro-protect/src/client.rs)):
 - `Pinned(Vec<u8>)` — PEM bytes for a specific root cert. The safe option
   for self-signed NVRs.
 - `AcceptInvalid` — disables verification entirely. Gated behind the
-  `dangerous-tls` cargo feature. The CLI enables this feature so
+  `insecure-tls` cargo feature. The CLI enables this feature so
   `--insecure` works; library consumers must opt in.
 
 ---

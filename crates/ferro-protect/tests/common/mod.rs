@@ -25,8 +25,8 @@ const ALLOW_MUTATIONS_ENV: &str = "UNIFI_PROTECT_ALLOW_MUTATIONS";
 ///   is. A half-configured live env is almost always a developer mistake
 ///   we want to surface loudly, not silently skip past.
 /// - **Panics** if `_INSECURE` is requested but the library was built
-///   without the `dangerous-tls` feature. `scripts/live-test` passes
-///   `--features dangerous-tls` automatically; manual `cargo test`
+///   without the `insecure-tls` feature. `scripts/live-test` passes
+///   `--features insecure-tls` automatically; manual `cargo test`
 ///   invocations targeting a self-signed NVR need to do the same.
 pub fn live_client() -> Option<ProtectClient> {
     let host = std::env::var(HOST_ENV).ok()?;
@@ -46,15 +46,15 @@ pub fn live_client() -> Option<ProtectClient> {
 
     let mut builder = ProtectClient::builder().host(host).api_key(key);
     if insecure {
-        #[cfg(feature = "dangerous-tls")]
+        #[cfg(feature = "insecure-tls")]
         {
             builder = builder.tls(ferro_protect::TlsMode::AcceptInvalid);
         }
-        #[cfg(not(feature = "dangerous-tls"))]
+        #[cfg(not(feature = "insecure-tls"))]
         {
             panic!(
-                "{INSECURE_ENV} is set but ferro-protect was built without the `dangerous-tls` feature. \
-                 Re-run with `cargo test --features dangerous-tls ...` or use ./scripts/live-test."
+                "{INSECURE_ENV} is set but ferro-protect was built without the `insecure-tls` feature. \
+                 Re-run with `cargo test --features insecure-tls ...` or use ./scripts/live-test."
             );
         }
     }

@@ -17,7 +17,7 @@ default = []
 # Enables ProtectClient::builder().tls(TlsMode::AcceptInvalid). Off by
 # default because it disables certificate validation; only useful for
 # testing or for self-signed NVRs you cannot pin a cert for.
-dangerous-tls = []
+insecure-tls = []
 
 [dependencies]
 reqwest = { workspace = true }

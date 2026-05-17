@@ -79,7 +79,7 @@ Run the live test suite:
 ```
 
 The script sources `.env.local`, then runs the live tests with
-`--features dangerous-tls` (so `--insecure`/self-signed NVRs work) and
+`--features insecure-tls` (so `--insecure`/self-signed NVRs work) and
 `--nocapture` (so test stdout reaches your terminal). If you'd rather
 run them through plain `cargo`:
 
