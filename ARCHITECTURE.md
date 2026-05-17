@@ -52,8 +52,9 @@ a time via a single constant in [`crates/ferro-protect/build.rs`](crates/ferro-p
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  crates/ferro-protect/src/generated.rs                              │
-│  ─ one line:  include!(concat!(env!("OUT_DIR"), "/generated.rs"))   │
-│  ─ pub(crate) only — never exposed to library users                 │
+│  ─ one meaningful line:                                             │
+│      include!(concat!(env!("OUT_DIR"), "/generated.rs"))            │
+│  ─ private module — only models.rs re-exports from it               │
 │  ─ permissively #[allow(...)]'d so generated code never blocks      │
 │    our pedantic+nursery clippy gate                                 │
 └──────────────────────────────────┬──────────────────────────────────┘
@@ -188,7 +189,7 @@ The current state. Updated whenever the structure changes.
 | [src/auth.rs](crates/ferro-protect/src/auth.rs) | `ApiKey(SecretString)` wrapper. `API_KEY_HEADER` constant. |
 | [src/models.rs](crates/ferro-protect/src/models.rs) | **The seam.** Public re-exports from generated model types plus tiny hand-written inline response models. |
 | [src/client.rs](crates/ferro-protect/src/client.rs) | `ProtectClient`, `ProtectClientBuilder`, `TlsMode`. The user-facing surface. |
-| [src/generated.rs](crates/ferro-protect/src/generated.rs) | Three lines: a permissive `#![allow(...)]` block and `include!(env!("OUT_DIR") + "/generated.rs")`. `pub(crate)` only. |
+| [src/generated.rs](crates/ferro-protect/src/generated.rs) | A permissive `#![allow(...)]` block and `include!(concat!(env!("OUT_DIR"), "/generated.rs"))`. Declared as a private `mod generated;` in `lib.rs`; only `models.rs` re-exports from it. |
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
 | [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
@@ -311,11 +312,16 @@ Three layers, all driven by `cargo test --all`. None are `#[ignore]`d.
    additionally on `UNIFI_PROTECT_ALLOW_MUTATIONS=1` via
    `common::mutations_allowed()`.
 
-`insta` snapshots are used **only** for outputs of deterministic, pure
-transformations: the spec rewrite pipeline (now), and the CLI `--help` /
-canonical error-message text (planned for phase 10). Snapshots are
-deliberately not used for response bodies — those should be asserted on
-specific fields so a test's intent stays readable.
+`insta` snapshots are reserved for outputs of deterministic, pure
+transformations. None are currently active — the spec rewrite snapshot
+was retired when typify replaced progenitor (the rewrite layer shrank
+so much it no longer warrants a snapshot, and
+`tests/model_codegen.rs` covers the seam). Phase 10 will add snapshots
+for the CLI `--help` text and canonical error messages; the `insta` +
+`similar` `[profile.dev.package]` overrides in the workspace
+[Cargo.toml](Cargo.toml) stay in place for that future use. Snapshots
+are deliberately not used for response bodies — those should be
+asserted on specific fields so a test's intent stays readable.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) explicitly
 errors out if any `UNIFI_PROTECT_*` env var is present in the

@@ -34,7 +34,7 @@ impl<'a> ChimesApi<'a> {
     pub async fn get(&self, id: &ChimeId) -> Result<Chime> {
         let path = format!("/v1/chimes/{id}");
         let chime: Chime = self.client.get_json(&path).await?;
-        info!("fetched chime {}", chime.id);
+        info!("fetched chime {} (name: {:?})", chime.id, chime.name);
         Ok(chime)
     }
 }

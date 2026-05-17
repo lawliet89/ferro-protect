@@ -35,7 +35,7 @@ impl<'a> CamerasApi<'a> {
     pub async fn get(&self, id: &CameraId) -> Result<Camera> {
         let path = format!("/v1/cameras/{id}");
         let camera: Camera = self.client.get_json(&path).await?;
-        info!("fetched camera {}", camera.id);
+        info!("fetched camera {} (name: {:?})", camera.id, camera.name);
         Ok(camera)
     }
 }

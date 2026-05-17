@@ -72,6 +72,11 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
+    // The helpers below are unused at phase 4 but cover the shapes
+    // phases 5-8 will need (PATCH/POST bodies, 204 No Content, binary
+    // payloads). Keeping them here means each future endpoint is a
+    // one-line wrapper rather than a one-helper-plus-one-line churn.
+
     #[allow(dead_code)]
     pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
@@ -92,6 +97,21 @@ impl ProtectClient {
         debug!("PATCH {path}");
         let response = self.http.patch(self.url(path)?).json(body).send().await?;
         Self::json_response(response).await
+    }
+
+    /// Send a request whose 2xx response carries no body (typically 204).
+    /// Phases 5-7 use this for actions, mutations without a return shape,
+    /// and DELETE-style endpoints. Defined here so endpoint methods stay
+    /// one-liners without each one calling `json_response` and then
+    /// discarding `()`-shaped deserialisation errors on empty bodies.
+    #[allow(dead_code)]
+    pub(crate) async fn send_no_content(&self, method: reqwest::Method, path: &str) -> Result<()> {
+        debug!("{method} {path}");
+        let response = self.http.request(method, self.url(path)?).send().await?;
+        if response.status().is_success() {
+            return Ok(());
+        }
+        Err(Error::from_response(response).await)
     }
 
     #[allow(dead_code)]

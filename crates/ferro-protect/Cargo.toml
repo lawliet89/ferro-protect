@@ -22,8 +22,6 @@ dangerous-tls = []
 [dependencies]
 reqwest = { workspace = true }
 bytes = { workspace = true }
-chrono = { workspace = true }
-futures-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 secrecy = { workspace = true }
