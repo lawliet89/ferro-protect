@@ -276,7 +276,7 @@ if !common::mutations_allowed() { return; }
 ### Helper script
 
 `scripts/live-test` sources `.env.local` (gitignored) into the shell
-environment and runs the live tests with `--features dangerous-tls`
+environment and runs the live tests with `--features insecure-tls`
 and `--nocapture`. Agents can set env vars directly and skip the
 script.
 

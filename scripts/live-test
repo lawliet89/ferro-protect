@@ -29,4 +29,4 @@ if [[ -z "${UNIFI_PROTECT_HOST:-}" ]]; then
   exit 1
 fi
 
-exec cargo test --features dangerous-tls -p ferro-protect --test live -- --nocapture "$@"
+exec cargo test --features insecure-tls -p ferro-protect --test live -- --nocapture "$@"

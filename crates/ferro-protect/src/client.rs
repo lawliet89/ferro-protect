@@ -23,13 +23,13 @@ const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// default. `Pinned` lets you supply a PEM-encoded certificate (typical for
 /// a self-signed NVR you've fetched the cert from once). `AcceptInvalid`
 /// disables verification entirely and is only available when the library
-/// is built with the `dangerous-tls` feature.
+/// is built with the `insecure-tls` feature.
 #[derive(Default, Clone)]
 pub enum TlsMode {
     #[default]
     Native,
     Pinned(Vec<u8>),
-    #[cfg(feature = "dangerous-tls")]
+    #[cfg(feature = "insecure-tls")]
     AcceptInvalid,
 }
 
@@ -211,7 +211,7 @@ impl ProtectClientBuilder {
         let tls_label = match &self.tls {
             TlsMode::Native => "native",
             TlsMode::Pinned(_) => "pinned",
-            #[cfg(feature = "dangerous-tls")]
+            #[cfg(feature = "insecure-tls")]
             TlsMode::AcceptInvalid => "accept-invalid (insecure!)",
         };
 
@@ -227,7 +227,7 @@ impl ProtectClientBuilder {
                     .map_err(|e| Error::Other(format!("invalid pinned certificate: {e}")))?;
                 builder.add_root_certificate(cert)
             }
-            #[cfg(feature = "dangerous-tls")]
+            #[cfg(feature = "insecure-tls")]
             TlsMode::AcceptInvalid => builder.danger_accept_invalid_certs(true),
         };
 

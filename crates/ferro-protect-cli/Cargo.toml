@@ -20,7 +20,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-ferro-protect = { path = "../ferro-protect", version = "0.1.0", features = ["dangerous-tls"] }
+ferro-protect = { path = "../ferro-protect", version = "0.1.0", features = ["insecure-tls"] }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
