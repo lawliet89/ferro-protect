@@ -343,7 +343,7 @@ If the WebSocket framing turns out to differ from straight JSON-over-WS (it has 
 
 **Goal**: configuration changes via PATCH and creates via POST, in order of increasing impact. First of the mutation phases.
 
-> Note: the retry middleware added before phase 5 deliberately does **not** retry POST/PATCH/DELETE by default ([`ProtectClientBuilder::retry_on_mutations`](crates/ferro-protect/src/client.rs)). A 5xx after the server has already applied the change must not silently re-fire. Tests that intentionally exercise mutation retries should opt in explicitly.
+> Note: the retry middleware deliberately does **not** retry POST/PATCH/DELETE by default ([`ProtectClientBuilder::retry_on_mutations`](crates/ferro-protect/src/client.rs)). A 5xx after the server has already applied the change must not silently re-fire. Tests that intentionally exercise mutation retries should opt in explicitly.
 
 Order (one commit per entity):
 
