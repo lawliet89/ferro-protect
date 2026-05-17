@@ -177,6 +177,16 @@ async fn live_read_liveviews_get() {
 }
 
 #[tokio::test]
+async fn live_read_nvrs_get() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_nvrs_get: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let nvr = client.nvrs().get().await.expect("nvrs get call succeeded");
+    println!("live_read_nvrs_get: {} ({:?})", nvr.id, nvr.name);
+}
+
+#[tokio::test]
 async fn live_read_chimes_list() {
     let Some(client) = common::live_client() else {
         println!("(skipping live_read_chimes_list: UNIFI_PROTECT_HOST not set)");

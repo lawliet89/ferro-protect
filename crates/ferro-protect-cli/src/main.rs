@@ -105,6 +105,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::liveviews::Action,
     },
+    /// NVR read endpoint (list only; one per installation).
+    Nvrs {
+        #[command(subcommand)]
+        action: commands::nvrs::Action,
+    },
 }
 
 #[tokio::main]
@@ -161,6 +166,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Liveviews { action } => {
             commands::liveviews::run(&client, action, cli.json).await?;
         }
+        Command::Nvrs { action } => commands::nvrs::run(&client, action, cli.json).await?,
     }
     Ok(())
 }
