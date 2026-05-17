@@ -39,6 +39,51 @@ public-API snapshot test.
 
 **Next**: Phase 1 — progenitor codegen pipeline.
 
+## 2026-05-17 11:20 +0800 — Chore: snapshot test for the spec rewrite pipeline
+
+**Status**: complete
+
+**Summary**:
+Implemented [docs/TASK_SNAPSHOT.md](docs/TASK_SNAPSHOT.md). Extracted the
+rewrite functions out of `build.rs` into
+`crates/ferro-protect/build_support/spec_rewrite.rs` behind a single
+`pub fn rewrite(serde_json::Value) -> serde_json::Value` entry point;
+`build.rs` now does `#[path = "build_support/spec_rewrite.rs"] mod
+spec_rewrite;` and calls `spec_rewrite::rewrite(raw)`. A new integration
+test at `crates/ferro-protect/tests/spec_rewrite_snapshot.rs` reads the
+pinned spec, runs it through `rewrite`, and asserts via
+`insta::assert_json_snapshot!`. The accepted snapshot
+(`tests/snapshots/spec_rewrite_snapshot__rewrite_output_matches_snapshot.snap`,
+5,590 lines) is committed. Added an "When the snapshot test fails" section
+to `UPGRADING.md`. All four gates pass.
+
+**Files added/changed**:
+- `crates/ferro-protect/build_support/spec_rewrite.rs` (new; moved logic)
+- `crates/ferro-protect/build.rs` (now thin, delegates to spec_rewrite)
+- `crates/ferro-protect/tests/spec_rewrite_snapshot.rs` (new test)
+- `crates/ferro-protect/tests/snapshots/spec_rewrite_snapshot__rewrite_output_matches_snapshot.snap` (new fixture)
+- `crates/ferro-protect/Cargo.toml` (insta + serde_json under [dev-dependencies])
+- `Cargo.toml` (workspace dep `insta = { version = "1", features = ["json"] }`)
+- `UPGRADING.md` (new section)
+- `.gitignore` (`**/*.snap.new`)
+
+**Decisions / deviations**:
+- Acceptance criterion: `$OUT_DIR/generated.rs` was byte-identical before
+  vs after the refactor. Verified via sha256sum (unchanged
+  `f6952d2f41b2579076d26eaf618c98a3f30cf57d44c0eb53dcb0f0a52ddd52a8`).
+- Acceptance criterion: tripwire works. Locally mutated
+  `*v = "3.0.3".to_string()` -> `"3.0.2"` in the rewrite module; the test
+  failed with a readable diff at the top-level `openapi` field. Reverted
+  and re-ran; back to green.
+- The task instructed to "append a PROGRESS.md entry" and commit it
+  together with the work, overriding PLAN.md's usual "PROGRESS.md lands in
+  the next phase's commit" rule. Following the task instruction.
+- Renamed the internal recursive helper (formerly named `rewrite`) to
+  `descend` because the public entry point now owns the `rewrite` name.
+
+**Next**: Phase 2 — info endpoint end-to-end + live-NVR integration test
+scaffold.
+
 ## 2026-05-17 11:05 +0800 — Phase 1: codegen pipeline
 
 **Status**: complete

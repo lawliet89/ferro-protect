@@ -34,6 +34,7 @@ openapiv3 = "2"
 syn = { version = "2", features = ["full"] }
 prettyplease = "0.2"
 is-terminal = "0.4"
+insta = { version = "1", features = ["json"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

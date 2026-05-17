@@ -84,6 +84,22 @@ cp target/debug/build/ferro-protect-*/out/generated.rs /tmp/generated.after
 diff -u /tmp/generated.before /tmp/generated.after | less
 ```
 
+## When the snapshot test fails
+
+If `cargo test` reports `rewrite_output_matches_snapshot` failed, the spec
+rewrite pipeline produced different output than last time. This is expected
+when you bump the spec submodule or change a rewrite rule. Steps:
+
+1. Run `cargo insta review` and inspect the diff.
+2. **Read the diff carefully.** Changes you expected (e.g., new endpoints
+   from a spec bump) are fine to accept. Changes you did *not* expect — new
+   shapes you've never seen, lost fields, unexpected `oneOf` collapses —
+   indicate the spec introduced a construct the rewrite pipeline doesn't
+   fully handle. Fix the rewrite first, then re-run.
+3. Accept the new snapshot with `cargo insta accept` (or the equivalent in
+   `cargo insta review`).
+4. Commit the updated `.snap` file alongside the spec bump.
+
 ## Agent checklist
 
 A coding agent should be able to upgrade by running, in order:
