@@ -16,7 +16,15 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-ferro-protect = { path = "../ferro-protect", version = "0.1.0" }
+ferro-protect = { path = "../ferro-protect", version = "0.1.0", features = ["dangerous-tls"] }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+secrecy = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+wiremock = { workspace = true }

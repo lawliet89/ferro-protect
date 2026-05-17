@@ -3,7 +3,27 @@
 
 //! Async Rust client for the UniFi Protect local integration API (v6.2.83).
 //!
-//! Pre-0.1.0. This crate is under construction; see the project `PLAN.md` for
-//! the phased build plan.
+//! ```no_run
+//! # async fn run() -> ferro_protect::Result<()> {
+//! use ferro_protect::ProtectClient;
+//! use secrecy::SecretString;
+//!
+//! let client = ProtectClient::builder()
+//!     .host("nvr.local")
+//!     .api_key("paste-key-here".to_string().into())
+//!     .build()?;
+//!
+//! let info = client.info().await?;
+//! println!("Protect {}", info.application_version);
+//! # Ok(()) }
+//! ```
 
-pub(crate) mod generated;
+pub mod error;
+pub mod models;
+
+mod auth;
+mod client;
+mod generated;
+
+pub use client::{ProtectClient, ProtectClientBuilder, TlsMode};
+pub use error::{Error, Result};
