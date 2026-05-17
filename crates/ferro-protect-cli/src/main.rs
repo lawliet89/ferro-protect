@@ -6,9 +6,9 @@
 //! `ferro-protect` library.
 
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use ferro_protect::{ProtectClient, TlsMode};
-use ferro_protect_cli::{api_key, commands};
+use ferro_protect_cli::{api_key, commands, logging};
 
 /// Command-line interface for the UniFi Protect integration API.
 #[derive(Debug, Parser)]
@@ -51,8 +51,34 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Log level for diagnostic output (writes to stderr). When unset,
+    /// falls back to `UNIFI_PROTECT_LOG`, then `RUST_LOG`, then `warn`.
+    #[arg(long, value_enum, global = true)]
+    log_level: Option<LogLevel>,
+
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    const fn as_filter(self) -> log::LevelFilter {
+        match self {
+            Self::Error => log::LevelFilter::Error,
+            Self::Warn => log::LevelFilter::Warn,
+            Self::Info => log::LevelFilter::Info,
+            Self::Debug => log::LevelFilter::Debug,
+            Self::Trace => log::LevelFilter::Trace,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -74,10 +100,18 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    logging::init(cli.log_level.map(LogLevel::as_filter));
     run(cli).await
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    log::debug!(
+        "ferro-protect starting: command={:?}, json={}, insecure={}",
+        std::mem::discriminant(&cli.command),
+        cli.json,
+        cli.insecure,
+    );
+
     // Resolve the key in a sync block so the stderr lock guard (which
     // isn't Send) never lives across an .await point.
     let key = {
@@ -88,6 +122,7 @@ async fn run(cli: Cli) -> Result<()> {
             &mut stderr,
         )?
     };
+    log::debug!("api key resolved (source resolution complete)");
 
     let mut builder = ProtectClient::builder().api_key(key);
     match (&cli.base_url, &cli.host) {

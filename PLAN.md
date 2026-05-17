@@ -258,6 +258,37 @@ current state is).
 
 ---
 
+## Logging
+
+This is cross-cutting: phases 2 onward should add log calls where they add
+real value. The wiring landed in a chore between phases 4b and 4c (see
+PROGRESS.md). Conventions:
+
+- **Library** (`ferro-protect`) emits through the [`log`](https://docs.rs/log)
+  facade. By itself the crate produces no output -- the binary using it is
+  responsible for configuring a logger. The library never initialises one.
+- **CLI** (`ferro-protect-cli`) wires [`env_logger`](https://docs.rs/env_logger)
+  in `crates/ferro-protect-cli/src/logging.rs`. The filter is resolved in
+  this priority order: `--log-level <level>` flag > `UNIFI_PROTECT_LOG` env
+  > `RUST_LOG` env > the literal default `warn`. Output goes to **stderr**
+  (not stdout) so `--json` and the human tables stay parseable through
+  `| jq` and friends. Levels emitted in library code today:
+  - `info!` -- top-level outcome of each request ("listed N cameras",
+    "fetched application info: version X"), `ProtectClient` construction
+    with TLS mode label.
+  - `debug!` -- breadcrumb at every request entry (`GET /v1/...`),
+    timeouts at builder time.
+  - `warn!` -- response-mapping fallback paths (unexpected error-body
+    shape, unknown error code, etc.).
+- New endpoints in phase 4+ follow the same pattern: `debug!` before the
+  request, `info!` after a successful response summarising the outcome,
+  `warn!` only when something unexpected happens that the user might want
+  to know about but we can still proceed.
+- Do not log API keys, raw request bodies, or response bodies in full.
+  Cardinality (counts, ids, status codes, version strings) is fine.
+
+---
+
 ## Architecture documentation
 
 `ARCHITECTURE.md` at the repo root is the "start here" doc for a human (or

@@ -1,5 +1,7 @@
 //! Camera read endpoints. PATCH and action endpoints land in phases 5/6/7.
 
+use log::{debug, info};
+
 use crate::client::ProtectClient;
 use crate::error::{Error, Result};
 use crate::models::{Camera, CameraId};
@@ -20,13 +22,16 @@ impl<'a> CamerasApi<'a> {
     /// # Errors
     /// [`Error`] -- typically `Http` (network) or `Api` (4xx).
     pub async fn list(&self) -> Result<Vec<Camera>> {
+        debug!("GET /v1/cameras");
         let resp = self
             .client
             .inner
             .get_cameras()
             .await
             .map_err(Error::from_progenitor)?;
-        Ok(resp.into_inner())
+        let cameras = resp.into_inner();
+        info!("listed {} camera(s)", cameras.len());
+        Ok(cameras)
     }
 
     /// `GET /v1/cameras/{id}`. Look up one camera by ID.
@@ -35,13 +40,16 @@ impl<'a> CamerasApi<'a> {
     /// [`Error`] -- typically `Http`, `Api { status: 404, .. }` for an
     /// unknown ID, or `Json` if the response body fails the schema.
     pub async fn get(&self, id: &CameraId) -> Result<Camera> {
+        debug!("GET /v1/cameras/{id}");
         let resp = self
             .client
             .inner
             .get_cameras_id(id)
             .await
             .map_err(Error::from_progenitor)?;
-        Ok(resp.into_inner())
+        let camera = resp.into_inner();
+        info!("fetched camera {} ({})", camera.id, camera.name);
+        Ok(camera)
     }
 }
 

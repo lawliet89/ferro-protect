@@ -1,5 +1,6 @@
 //! Error type for the ferro-protect client.
 
+use log::warn;
 use thiserror::Error;
 
 /// Convenience alias for `Result<T, ferro_protect::Error>`.
@@ -80,13 +81,19 @@ fn extract_code_and_message<E: serde::Serialize>(body: &E) -> (String, String) {
     let code = value
         .get("name")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("unknown")
+        .unwrap_or_else(|| {
+            warn!("API error body had no `name` field; falling back to \"unknown\". Body: {value}");
+            "unknown"
+        })
         .to_string();
     let message = value
         .get("error")
         .and_then(serde_json::Value::as_str)
         .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
-        .unwrap_or("(no message)")
+        .unwrap_or_else(|| {
+            warn!("API error body had no `error` or `message` field; falling back to \"(no message)\"");
+            "(no message)"
+        })
         .to_string();
     (code, message)
 }

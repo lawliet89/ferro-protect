@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use log::{debug, info};
 use reqwest::header::HeaderMap;
 use secrecy::SecretString;
 
@@ -55,12 +56,18 @@ impl ProtectClient {
     /// failures, [`Error::Api`] for a non-2xx response, [`Error::Json`]
     /// if the body does not match the schema.
     pub async fn info(&self) -> Result<ApplicationInfo> {
+        debug!("GET /v1/meta/info");
         let resp = self
             .inner
             .get_meta_info()
             .await
             .map_err(Error::from_progenitor)?;
-        Ok(resp.into_inner())
+        let info = resp.into_inner();
+        info!(
+            "fetched application info: version {}",
+            info.application_version
+        );
+        Ok(info)
     }
 }
 
@@ -133,6 +140,13 @@ impl ProtectClientBuilder {
         let mut headers = HeaderMap::new();
         headers.insert(API_KEY_HEADER, header_value);
 
+        let tls_label = match &self.tls {
+            TlsMode::Native => "native",
+            TlsMode::Pinned(_) => "pinned",
+            #[cfg(feature = "dangerous-tls")]
+            TlsMode::AcceptInvalid => "accept-invalid (insecure!)",
+        };
+
         let mut builder = reqwest::ClientBuilder::new()
             .default_headers(headers)
             .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
@@ -151,6 +165,10 @@ impl ProtectClientBuilder {
 
         let http = builder.build()?;
         let inner = Inner::new_with_client(&base_url, http);
+        info!("ProtectClient built: base_url={base_url}, tls={tls_label}");
+        debug!(
+            "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}"
+        );
         Ok(ProtectClient { inner })
     }
 }

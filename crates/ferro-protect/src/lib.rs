@@ -17,6 +17,20 @@
 //! println!("Protect {}", info.application_version);
 //! # Ok(()) }
 //! ```
+//!
+//! # Logging
+//!
+//! This crate emits log records through the [`log`](https://docs.rs/log)
+//! facade. By itself it produces no output -- the binary using the crate
+//! is responsible for configuring a logger (`env_logger`, `tracing-log`,
+//! `fern`, etc.). The `ferro-protect` CLI uses `env_logger`; see
+//! `crates/ferro-protect-cli/src/main.rs` for the wiring.
+//!
+//! Levels we emit at:
+//!
+//! - `debug!` -- each outbound request, builder finalisation
+//! - `warn!`  -- response-mapping fallback paths (unexpected body shape,
+//!   unknown error code, etc.)
 
 pub mod error;
 pub mod models;

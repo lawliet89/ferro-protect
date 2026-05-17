@@ -7,4 +7,5 @@
 
 pub mod api_key;
 pub mod commands;
+pub mod logging;
 pub mod output;

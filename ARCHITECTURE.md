@@ -192,6 +192,8 @@ The current state. Updated whenever the structure changes.
 | [src/models.rs](crates/ferro-protect/src/models.rs) | **The seam.** Public re-exports from `generated::types::*`. |
 | [src/client.rs](crates/ferro-protect/src/client.rs) | `ProtectClient`, `ProtectClientBuilder`, `TlsMode`. The user-facing surface. |
 | [src/generated.rs](crates/ferro-protect/src/generated.rs) | Three lines: a permissive `#![allow(...)]` block and `include!(env!("OUT_DIR") + "/generated.rs")`. `pub(crate)` only. |
+| [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
+| [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
 | [tests/live.rs](crates/ferro-protect/tests/live.rs) | Live tests against a real NVR. Auto-skip when env absent. |
 | [tests/common/mod.rs](crates/ferro-protect/tests/common/mod.rs) | `live_client() -> Option<ProtectClient>`, `mutations_allowed() -> bool`. Pulled in by each live test via `mod common;`. |
@@ -204,7 +206,12 @@ The current state. Updated whenever the structure changes.
 | Path | What |
 |---|---|
 | [Cargo.toml](crates/ferro-protect-cli/Cargo.toml) | CLI manifest. Depends on `ferro-protect` with `dangerous-tls` enabled (so `--insecure` works). |
-| [src/main.rs](crates/ferro-protect-cli/src/main.rs) | `clap`-derive CLI. Global args + `Info` subcommand. Phase-2 temporary `--api-key` flag, slated for removal in phase 3. |
+| [src/main.rs](crates/ferro-protect-cli/src/main.rs) | `clap`-derive CLI. Global args (`--host`, `--api-key-file`, `--insecure`, `--json`, `--log-level`) + subcommands (`info`, `cameras`, `chimes`, …). |
+| [src/lib.rs](crates/ferro-protect-cli/src/lib.rs) | Library half so integration tests can reach internals (`api_key`, `commands`, `output`, `logging`). |
+| [src/api_key.rs](crates/ferro-protect-cli/src/api_key.rs) | Resolver with `--api-key-file` > `UNIFI_PROTECT_API_KEY_FILE` > `UNIFI_PROTECT_API_KEY` precedence; injects warnings through an `io::Write` so callers can capture or stream them. |
+| [src/logging.rs](crates/ferro-protect-cli/src/logging.rs) | `env_logger` setup: flag > `UNIFI_PROTECT_LOG` > `RUST_LOG` > `warn`. Writes to stderr. |
+| [src/output.rs](crates/ferro-protect-cli/src/output.rs) | `emit()` (JSON-or-human dispatch) + `table()` (fixed-column renderer). |
+| [src/commands/](crates/ferro-protect-cli/src/commands/) | Per-entity subcommand handlers. One file per entity. |
 | [tests/info.rs](crates/ferro-protect-cli/tests/info.rs) | `assert_cmd` end-to-end test against wiremock. |
 
 ### `third_party/unifi-apis/` (submodule)
@@ -260,6 +267,31 @@ Three TLS modes ([`TlsMode`](crates/ferro-protect/src/client.rs)):
 - `AcceptInvalid` — disables verification entirely. Gated behind the
   `dangerous-tls` cargo feature. The CLI enables this feature so
   `--insecure` works; library consumers must opt in.
+
+---
+
+## Logging
+
+The library emits structured log records through the
+[`log`](https://docs.rs/log) facade and **does not** configure a logger.
+The CLI wires `env_logger` in
+[`src/logging.rs`](crates/ferro-protect-cli/src/logging.rs); filter
+resolution is `--log-level` flag > `UNIFI_PROTECT_LOG` > `RUST_LOG` >
+the literal `warn` default. Output goes to stderr so `--json` / table
+output on stdout stays parseable.
+
+Levels emitted in library code:
+
+- `info!` -- top-level request outcome ("listed N cameras"), client
+  construction with TLS-mode label
+- `debug!` -- per-request breadcrumb (`GET /v1/…`), timeout values at
+  build time
+- `warn!` -- response-mapping fallback paths (unexpected error-body
+  shape, missing `name`/`error` field, etc.)
+
+We deliberately do not log API keys, raw request/response bodies, or
+anything else high-cardinality enough to leak content. Counts, ids,
+status codes, and version strings are fine.
 
 ---
 
