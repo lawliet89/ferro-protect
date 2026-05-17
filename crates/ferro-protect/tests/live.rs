@@ -234,6 +234,53 @@ async fn live_read_sensors_get() {
 }
 
 #[tokio::test]
+async fn live_read_viewers_list() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_viewers_list: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let viewers = client
+        .viewers()
+        .list()
+        .await
+        .expect("viewers list call succeeded");
+    println!(
+        "live_read_viewers_list: {} viewer(s) returned",
+        viewers.len()
+    );
+    for v in &viewers {
+        println!("  - {} {:?} state={}", v.id, v.name, v.state);
+    }
+}
+
+#[tokio::test]
+async fn live_read_viewers_get() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_viewers_get: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let viewers = client
+        .viewers()
+        .list()
+        .await
+        .expect("viewers list call succeeded");
+    let Some(first) = viewers.first() else {
+        println!("(skipping live_read_viewers_get: NVR has no viewers)");
+        return;
+    };
+    let fetched = client
+        .viewers()
+        .get(&first.id)
+        .await
+        .expect("viewers get call succeeded");
+    println!(
+        "live_read_viewers_get: round-tripped {} ({:?})",
+        fetched.id, fetched.name
+    );
+    assert_eq!(fetched.id, first.id, "list+get should agree on id");
+}
+
+#[tokio::test]
 async fn live_read_chimes_list() {
     let Some(client) = common::live_client() else {
         println!("(skipping live_read_chimes_list: UNIFI_PROTECT_HOST not set)");

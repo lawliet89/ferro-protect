@@ -46,6 +46,7 @@ mod lights;
 mod liveviews;
 mod nvrs;
 mod sensors;
+mod viewers;
 
 pub use cameras::CamerasApi;
 pub use chimes::ChimesApi;
@@ -55,3 +56,4 @@ pub use lights::LightsApi;
 pub use liveviews::LiveviewsApi;
 pub use nvrs::NvrsApi;
 pub use sensors::SensorsApi;
+pub use viewers::ViewersApi;

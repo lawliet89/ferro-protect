@@ -115,6 +115,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::sensors::Action,
     },
+    /// Viewer read endpoints.
+    Viewers {
+        #[command(subcommand)]
+        action: commands::viewers::Action,
+    },
 }
 
 #[tokio::main]
@@ -173,6 +178,7 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Nvrs { action } => commands::nvrs::run(&client, action, cli.json).await?,
         Command::Sensors { action } => commands::sensors::run(&client, action, cli.json).await?,
+        Command::Viewers { action } => commands::viewers::run(&client, action, cli.json).await?,
     }
     Ok(())
 }

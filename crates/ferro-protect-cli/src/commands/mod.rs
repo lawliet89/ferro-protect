@@ -7,3 +7,4 @@ pub mod lights;
 pub mod liveviews;
 pub mod nvrs;
 pub mod sensors;
+pub mod viewers;
