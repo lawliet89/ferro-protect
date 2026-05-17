@@ -62,25 +62,47 @@ Runs everything: unit tests, mocked integration tests (against an in-process
 `FERRO_PROTECT_LIVE_HOST` at the top of the function and early-return as `ok`
 when absent. So this command is safe and useful on any machine, NVR or not.
 
-### Live tests against a real NVR
+### How to run live tests
 
-Copy the env template and fill it in:
+One-time setup:
 
 ```sh
 cp .env.example .env.local
-$EDITOR .env.local
+$EDITOR .env.local          # fill in FERRO_PROTECT_LIVE_HOST + key path
+chmod 600 <your api key file>
 ```
 
-Then either:
+Run the live test suite:
 
 ```sh
-./scripts/live-test                          # sources .env.local for you
-# -- or --
-set -a; source .env.local; set +a; cargo test --all
+./scripts/live-test
 ```
 
-Variables (all prefixed `FERRO_PROTECT_LIVE_` to make accidental activation
-impossible):
+The script sources `.env.local`, then runs the live tests with
+`--features dangerous-tls` (so `--insecure`/self-signed NVRs work) and
+`--nocapture` (so test stdout reaches your terminal). If you'd rather
+run them through plain `cargo`:
+
+```sh
+set -a; source .env.local; set +a
+cargo test --all
+```
+
+Run an ad hoc command against the real NVR (useful for poking at a single
+subcommand without going through the test harness):
+
+```sh
+set -a; source .env.local; set +a
+cargo run -p ferro-protect-cli -- \
+  --host "$FERRO_PROTECT_LIVE_HOST" \
+  --api-key-file "$FERRO_PROTECT_LIVE_API_KEY_FILE" \
+  ${FERRO_PROTECT_LIVE_INSECURE:+--insecure} \
+  info
+```
+
+#### Environment variables
+
+All prefixed `FERRO_PROTECT_LIVE_` to make accidental activation impossible:
 
 | Var | Purpose |
 |---|---|
@@ -90,9 +112,24 @@ impossible):
 | `FERRO_PROTECT_LIVE_INSECURE` | Set to a non-empty value to accept self-signed TLS (common on home NVRs). |
 | `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS` | Set to `1` to also run `live_write_*` tests. See below. |
 
-If `HOST` is set but no key source is, the helper panics with a clear message
-instead of silently skipping -- a half-configured live env is almost always a
-mistake.
+If `HOST` is set but no key source is, the test helper panics with a
+clear message instead of silently skipping -- a half-configured live env
+is almost always a mistake.
+
+#### Good moments to run them
+
+Live tests are safe to run any time — the suite skips cleanly without
+an NVR. Specific occasions where running them is *especially* useful:
+
+- After `./scripts/update-spec`: verify the regenerated client still
+  matches your NVR's wire protocol.
+- After changing the client builder, error mapping, auth, or TLS code:
+  the live test confirms the real device accepts the request.
+- After touching the API-key resolver or its env-var contract: exercise
+  your normal credential flow end to end.
+- After adding a new endpoint method: the matching `live_read_*` test
+  proves the wrapper round-trips through a real device.
+- Before tagging a release.
 
 ### Mutating live tests
 

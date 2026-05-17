@@ -354,6 +354,8 @@ dependencies = [
  "predicates",
  "secrecy",
  "serde_json",
+ "tempfile",
+ "thiserror",
  "tokio",
  "wiremock",
 ]

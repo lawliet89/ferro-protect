@@ -8,6 +8,10 @@ repository.workspace = true
 authors.workspace = true
 description = "Command-line tool for the UniFi Protect local integration API."
 
+[lib]
+name = "ferro_protect_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ferro-protect"
 path = "src/main.rs"
@@ -22,9 +26,11 @@ anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 secrecy = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 wiremock = { workspace = true }
+tempfile = { workspace = true }

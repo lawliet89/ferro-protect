@@ -8,7 +8,7 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use ferro_protect::{ProtectClient, TlsMode};
-use secrecy::SecretString;
+use ferro_protect_cli::api_key;
 
 /// Command-line interface for the UniFi Protect integration API.
 #[derive(Debug, Parser)]
@@ -22,16 +22,15 @@ struct Cli {
     #[arg(long, global = true, env = "UNIFI_PROTECT_BASE_URL")]
     base_url: Option<String>,
 
-    /// Path to a file containing the API key (phase 3 will broaden this).
+    /// Path to a file containing the API key.
+    ///
+    /// The resolver also reads `UNIFI_PROTECT_API_KEY_FILE` and
+    /// `UNIFI_PROTECT_API_KEY` env vars (in that priority order). The
+    /// `env =` mapping is **deliberately not** declared on this flag so
+    /// clap doesn't bypass the manual precedence logic in
+    /// `api_key::resolve`.
     #[arg(long, global = true)]
     api_key_file: Option<std::path::PathBuf>,
-
-    /// **TEMPORARY (phase 2 scaffold).** Pass the API key directly. Will be
-    /// removed in phase 3 when the smart loader lands. Use `--api-key-file`
-    /// or env vars instead in any real workflow.
-    // TODO: remove in phase 3
-    #[arg(long, global = true, hide = true)]
-    api_key: Option<String>,
 
     /// Skip TLS certificate validation. Use only with NVRs whose cert you
     /// cannot pin.
@@ -59,7 +58,16 @@ async fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let key = resolve_api_key(&cli)?;
+    // Resolve the key in a sync block so the stderr lock guard (which
+    // isn't Send) never lives across an .await point.
+    let key = {
+        let mut stderr = std::io::stderr().lock();
+        api_key::resolve(
+            cli.api_key_file.as_deref(),
+            &|name| std::env::var(name).ok(),
+            &mut stderr,
+        )?
+    };
 
     let mut builder = ProtectClient::builder().api_key(key);
     match (&cli.base_url, &cli.host) {
@@ -84,21 +92,4 @@ async fn run(cli: Cli) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Phase-2 placeholder for the smart API key loader. Replaced wholesale in
-/// phase 3 by a `cli::api_key::resolve()` that follows the
-/// flag > env-var-pointer > env-var-raw precedence.
-fn resolve_api_key(cli: &Cli) -> Result<SecretString> {
-    if let Some(path) = &cli.api_key_file {
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("reading API key from {}", path.display()))?;
-        return Ok(SecretString::from(raw.trim().to_string()));
-    }
-    if let Some(raw) = &cli.api_key {
-        return Ok(SecretString::from(raw.clone()));
-    }
-    Err(anyhow!(
-        "no API key provided -- pass --api-key-file <PATH> or (temporarily) --api-key <KEY>"
-    ))
 }

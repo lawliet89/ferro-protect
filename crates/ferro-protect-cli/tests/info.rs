@@ -3,6 +3,9 @@
 
 //! End-to-end test: spawn the `ferro-protect info` binary against a
 //! `wiremock` server and assert the output.
+//!
+//! The key is passed via `UNIFI_PROTECT_API_KEY` (one of the three
+//! resolver sources -- see `crates/ferro-protect-cli/src/api_key.rs`).
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -29,7 +32,9 @@ async fn info_prints_application_version() {
     let assert = tokio::task::spawn_blocking(move || {
         Command::cargo_bin("ferro-protect")
             .expect("binary built")
-            .args(["--base-url", &base_url, "--api-key", "test-key", "info"])
+            .env("UNIFI_PROTECT_API_KEY", "test-key")
+            .env_remove("UNIFI_PROTECT_API_KEY_FILE")
+            .args(["--base-url", &base_url, "info"])
             .assert()
     })
     .await
@@ -56,14 +61,9 @@ async fn info_json_flag_emits_json() {
     let assert = tokio::task::spawn_blocking(move || {
         Command::cargo_bin("ferro-protect")
             .expect("binary built")
-            .args([
-                "--base-url",
-                &base_url,
-                "--api-key",
-                "test-key",
-                "--json",
-                "info",
-            ])
+            .env("UNIFI_PROTECT_API_KEY", "test-key")
+            .env_remove("UNIFI_PROTECT_API_KEY_FILE")
+            .args(["--base-url", &base_url, "--json", "info"])
             .assert()
     })
     .await
