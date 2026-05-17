@@ -1,0 +1,4 @@
+{
+  "name": "notFound",
+  "error": "Sensor with id 'abc123' not found"
+}
