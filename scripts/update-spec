@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Bump the pinned UniFi Protect OpenAPI spec version.
+#
+# Usage:
+#   scripts/update-spec               # prints available versions and exits
+#   scripts/update-spec <VERSION>     # bumps to <VERSION> and runs the check suite
+#
+# Safe to re-run. On failure, leaves the working tree as-is so you can
+# inspect the diff and re-run after a fix.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+SUBMODULE="$REPO_ROOT/third_party/unifi-apis"
+SPEC_DIR="$SUBMODULE/unifi-protect"
+BUILD_RS="$REPO_ROOT/crates/ferro-protect/build.rs"
+
+cd "$REPO_ROOT"
+
+if [[ ! -d "$SUBMODULE/.git" && ! -f "$SUBMODULE/.git" ]]; then
+  echo "error: submodule $SUBMODULE not initialized" >&2
+  echo "  run: git submodule update --init --recursive" >&2
+  exit 1
+fi
+
+echo "Fetching latest spec submodule..."
+git -C "$SUBMODULE" fetch --quiet origin
+git -C "$SUBMODULE" checkout --quiet origin/HEAD
+
+available_versions() {
+  find "$SPEC_DIR" -maxdepth 1 -type f -name '*.json' -printf '%f\n' \
+    | sed 's/\.json$//' \
+    | sort -V
+}
+
+if [[ $# -eq 0 ]]; then
+  current="$(grep -oE 'const SPEC_VERSION: &str = "[^"]+"' "$BUILD_RS" \
+    | sed -E 's/.*"(.+)".*/\1/')"
+  echo
+  echo "Currently pinned: $current"
+  echo
+  echo "Available versions (most recent last):"
+  available_versions | sed 's/^/  /'
+  echo
+  echo "Usage: scripts/update-spec <VERSION>"
+  exit 0
+fi
+
+new_version="$1"
+spec_file="$SPEC_DIR/${new_version}.json"
+
+if [[ ! -f "$spec_file" ]]; then
+  echo "error: spec $spec_file not found" >&2
+  echo "  run scripts/update-spec with no args to list available versions" >&2
+  exit 1
+fi
+
+current="$(grep -oE 'const SPEC_VERSION: &str = "[^"]+"' "$BUILD_RS" \
+  | sed -E 's/.*"(.+)".*/\1/')"
+
+if [[ "$current" == "$new_version" ]]; then
+  echo "Already pinned to $new_version. Re-running checks anyway."
+else
+  echo "Bumping SPEC_VERSION: $current -> $new_version"
+  sed -i.bak -E \
+    "s|const SPEC_VERSION: &str = \"[^\"]+\"|const SPEC_VERSION: \&str = \"${new_version}\"|" \
+    "$BUILD_RS"
+  rm -f "${BUILD_RS}.bak"
+fi
+
+echo
+echo "Forcing regeneration..."
+# touching build.rs ensures cargo re-runs the build script even if cargo's
+# fingerprint thinks nothing changed
+touch "$BUILD_RS"
+
+echo
+echo "==> cargo build -p ferro-protect"
+cargo build -p ferro-protect
+
+echo
+echo "==> cargo test --all"
+cargo test --all
+
+echo
+echo "==> cargo clippy --all-targets --all-features -- -D warnings"
+cargo clippy --all-targets --all-features -- -D warnings
+
+echo
+echo "==> cargo deny check"
+cargo deny check
+
+echo
+echo "All checks passed."
+echo
+submodule_sha="$(git -C "$SUBMODULE" rev-parse --short HEAD)"
+echo "Submodule now at: $submodule_sha"
+echo
+echo "Next steps:"
+echo "  git add third_party/unifi-apis $(realpath --relative-to="$REPO_ROOT" "$BUILD_RS")"
+echo "  git commit -m 'chore: bump Protect spec to $new_version'"

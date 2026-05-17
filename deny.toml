@@ -24,6 +24,10 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",
     "OpenSSL",
+    # CDLA-Permissive-2.0: required by webpki-roots (pulled in via hyper-rustls
+    # via reqwest). A permissive data-sharing license; equivalent to MIT/BSD
+    # for the kinds of artifacts (the Mozilla CA root list) the crate ships.
+    "CDLA-Permissive-2.0",
 ]
 exceptions = []
 

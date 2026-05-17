@@ -5,3 +5,5 @@
 //!
 //! Pre-0.1.0. This crate is under construction; see the project `PLAN.md` for
 //! the phased build plan.
+
+pub(crate) mod generated;
