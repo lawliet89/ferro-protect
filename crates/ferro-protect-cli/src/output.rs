@@ -56,6 +56,7 @@ where
 /// worth tabulating.
 #[must_use]
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    let cols = headers.len();
     let mut table = Table::new();
     // `UTF8_FULL` over the other comfy-table presets: terminal users get
     // visible row/column separation without depending on terminal-specific
@@ -73,8 +74,22 @@ pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(headers.iter().copied());
 
-    for row in rows {
-        table.add_row(row.iter().map(String::as_str));
+    for (row_index, row) in rows.iter().enumerate() {
+        if row.len() != cols {
+            log::warn!(
+                "table row {row_index} has {} cells but {} headers; truncating/padding row to match header width",
+                row.len(),
+                cols
+            );
+        }
+
+        table.add_row(
+            row.iter()
+                .map(String::as_str)
+                .take(cols)
+                .chain(std::iter::repeat(""))
+                .take(cols),
+        );
     }
 
     format!("{table}\n")
@@ -113,6 +128,33 @@ mod tests {
             out.contains('─'),
             "expected UTF8_FULL border char in output: {out}"
         );
+        assert!(out.ends_with('\n'), "missing trailing newline: {out:?}");
+    }
+
+    #[test]
+    fn table_truncates_extra_cells() {
+        let out = table(
+            &["ID", "NAME"],
+            &[vec![
+                "cam-1".into(),
+                "Front Door".into(),
+                "EXTRA_CELL_SHOULD_NOT_RENDER".into(),
+            ]],
+        );
+
+        assert!(out.contains("cam-1"), "cell missing: {out}");
+        assert!(out.contains("Front Door"), "cell missing: {out}");
+        assert!(
+            !out.contains("EXTRA_CELL_SHOULD_NOT_RENDER"),
+            "extra cell should be truncated: {out}"
+        );
+    }
+
+    #[test]
+    fn table_pads_missing_cells() {
+        let out = table(&["ID", "NAME"], &[vec!["cam-1".into()]]);
+
+        assert!(out.contains("cam-1"), "cell missing: {out}");
         assert!(out.ends_with('\n'), "missing trailing newline: {out:?}");
     }
 
