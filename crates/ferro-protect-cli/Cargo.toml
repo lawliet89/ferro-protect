@@ -1,0 +1,22 @@
+[package]
+name = "ferro-protect-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line tool for the UniFi Protect local integration API."
+
+[[bin]]
+name = "ferro-protect"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ferro-protect = { path = "../ferro-protect", version = "0.1.0" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

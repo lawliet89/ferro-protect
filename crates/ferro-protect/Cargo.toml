@@ -1,0 +1,16 @@
+[package]
+name = "ferro-protect"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Async Rust client for the UniFi Protect local integration API (v6.2.83)."
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]

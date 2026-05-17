@@ -1,0 +1,10 @@
+/target
+**/target/
+**/*.rs.bk
+*.swp
+*.swo
+.DS_Store
+/PROGRESS.md.bak
+.idea/
+.vscode/
+.direnv/

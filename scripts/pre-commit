@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Local pre-commit hook for ferro-protect.
+# Symlink into your repo's hook directory:
+#   ln -s ../../scripts/pre-commit .git/hooks/pre-commit
+set -euo pipefail
+
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
