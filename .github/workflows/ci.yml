@@ -5,9 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel any in-progress run for the same ref when a new commit is pushed.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Redundant with GitHub Actions' default CI=true (insta already keys off
+  # that), but explicit is friendlier to anyone reading the workflow.
+  INSTA_UPDATE: "no"
 
 jobs:
   check:
@@ -31,10 +39,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: cargo test
-        run: cargo test --all
+        run: cargo test --locked --all
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2
@@ -42,4 +50,4 @@ jobs:
           tool: cargo-deny
 
       - name: cargo deny check
-        run: cargo deny check
+        run: cargo deny --locked check
