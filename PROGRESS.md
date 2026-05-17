@@ -396,3 +396,28 @@ same template.)
 - `ApplicationInfo` is hand-written in `models.rs` because the info response schema is inline under the operation response, not named under `components.schemas`.
 
 **Next**: Continue Phase 4 from the branch's existing cameras/chimes work, using shared HTTP helpers for the remaining entity wrappers.
+
+## 2026-05-17 07:21 +0000 — Chore: nicer CLI output (tables and adjacent surface)
+
+**Status**: complete
+
+**Summary**:
+Replaced the CLI's hand-rolled table renderer with a `comfy-table`-backed implementation while preserving `output::table(&[&str], &[Vec<String>]) -> String` so existing and future entity commands keep the same call shape. Kept per-entity `render_one()` output manual and added a shared `output::display_optional` helper to remove repeated optional-name formatting logic.
+
+**Files added/changed**:
+- `Cargo.toml`, `Cargo.lock`
+- `crates/ferro-protect-cli/Cargo.toml`
+- `crates/ferro-protect-cli/src/output.rs`
+- `crates/ferro-protect-cli/src/commands/cameras.rs`
+- `crates/ferro-protect-cli/src/commands/chimes.rs`
+- `ARCHITECTURE.md`
+- `PLAN.md`
+- `PROGRESS.md`
+
+**Decisions / deviations**:
+- Adopted `comfy-table` (`default-features = false`) only in the CLI crate surface.
+- Chose `UTF8_FULL` preset for human output readability in terminal usage.
+- Preserved explicit empty-list strings (`(no cameras)`, `(no chimes)`) in command renderers; no behavior change for existing empty-list UX or JSON output.
+- Kept `render_one()` manual and extracted only optional-value formatting as a shared helper, matching the chore's recommended scope.
+
+**Next**: Continue phase 4 entity coverage using the same `output::table` + manual `render_one` convention.

@@ -212,7 +212,7 @@ The current state. Updated whenever the structure changes.
 | [src/lib.rs](crates/ferro-protect-cli/src/lib.rs) | Library half so integration tests can reach internals (`api_key`, `commands`, `output`, `logging`). |
 | [src/api_key.rs](crates/ferro-protect-cli/src/api_key.rs) | Resolver with `--api-key-file` > `UNIFI_PROTECT_API_KEY_FILE` > `UNIFI_PROTECT_API_KEY` precedence; injects warnings through an `io::Write` so callers can capture or stream them. |
 | [src/logging.rs](crates/ferro-protect-cli/src/logging.rs) | `env_logger` setup: flag > `UNIFI_PROTECT_LOG` > `RUST_LOG` > `warn`. Writes to stderr. |
-| [src/output.rs](crates/ferro-protect-cli/src/output.rs) | `emit()` (JSON-or-human dispatch) + `table()` (fixed-column renderer). |
+| [src/output.rs](crates/ferro-protect-cli/src/output.rs) | `emit()` (JSON-or-human dispatch), `table()` (comfy-table-backed list renderer), and shared display helpers for optional fields. |
 | [src/commands/](crates/ferro-protect-cli/src/commands/) | Per-entity subcommand handlers. One file per entity. |
 | [tests/info.rs](crates/ferro-protect-cli/tests/info.rs) | `assert_cmd` end-to-end test against wiremock. |
 

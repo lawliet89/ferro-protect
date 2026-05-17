@@ -4,7 +4,11 @@
 //! prints either pretty-JSON (if `--json`) or the human-formatted string
 //! produced by the closure.
 
+use std::fmt::Display;
 use std::io::{self, Write};
+
+use comfy_table::presets::UTF8_FULL;
+use comfy_table::{ContentArrangement, Table};
 
 /// Write either JSON or human output, depending on `json`.
 ///
@@ -45,53 +49,24 @@ where
     emit(&mut lock, value, json, render_human)
 }
 
-/// Render a list of rows as a fixed-column table. Columns are sized to the
-/// widest cell. Header row is bolded with terminal escapes when stdout is a
-/// TTY, otherwise plain.
+/// Render a list of rows as a human table.
 #[must_use]
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    let cols = headers.len();
-    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    let mut table = Table::new();
+    // Use UTF-8 borders for human-readable terminal output.
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(headers.iter().copied());
+
     for row in rows {
-        for (i, cell) in row.iter().enumerate().take(cols) {
-            if cell.len() > widths[i] {
-                widths[i] = cell.len();
-            }
-        }
+        table.add_row(row.iter().map(String::as_str));
     }
 
-    let mut out = String::new();
-    push_row(&mut out, headers.iter().copied(), &widths);
-    push_row(
-        &mut out,
-        widths
-            .iter()
-            .map(|w| "-".repeat(*w))
-            .collect::<Vec<_>>()
-            .iter()
-            .map(String::as_str),
-        &widths,
-    );
-    for row in rows {
-        push_row(&mut out, row.iter().map(String::as_str), &widths);
-    }
-    out
+    format!("{table}\n")
 }
 
-fn push_row<'a, I>(out: &mut String, cells: I, widths: &[usize])
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut first = true;
-    for (cell, width) in cells.into_iter().zip(widths.iter()) {
-        if !first {
-            out.push_str("  ");
-        }
-        first = false;
-        out.push_str(cell);
-        for _ in cell.len()..*width {
-            out.push(' ');
-        }
-    }
-    out.push('\n');
+#[must_use]
+pub fn display_optional<T: Display>(value: Option<&T>) -> String {
+    value.map(ToString::to_string).unwrap_or_default()
 }

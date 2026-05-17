@@ -272,7 +272,7 @@ ferro-protect cameras list [--json]
 ferro-protect cameras get <ID> [--json]
 ```
 
-Human output for lists is a compact table (id, name, type, state). `--json` prints the array unmodified. The `Output` helper module (`src/output.rs`) should be introduced here so format selection lives in one place.
+Human output for lists is a compact table (id, name, type, state). `--json` prints the array unmodified. The `Output` helper module (`src/output.rs`) centralises format selection and shared render helpers; list tables are rendered via a single `output::table()` helper and per-entity `render_one()` blocks stay manual.
 
 Library shape that emerges:
 
