@@ -83,13 +83,9 @@ pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
             );
         }
 
-        table.add_row(
-            row.iter()
-                .map(String::as_str)
-                .take(cols)
-                .chain(std::iter::repeat(""))
-                .take(cols),
-        );
+        let mut normalized_row: Vec<&str> = row.iter().map(String::as_str).take(cols).collect();
+        normalized_row.resize(cols, "");
+        table.add_row(normalized_row);
     }
 
     format!("{table}\n")
