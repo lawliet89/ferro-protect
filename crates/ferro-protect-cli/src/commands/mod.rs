@@ -4,3 +4,4 @@
 pub mod cameras;
 pub mod chimes;
 pub mod lights;
+pub mod liveviews;

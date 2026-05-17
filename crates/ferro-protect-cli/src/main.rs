@@ -100,6 +100,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::lights::Action,
     },
+    /// Liveview read endpoints.
+    Liveviews {
+        #[command(subcommand)]
+        action: commands::liveviews::Action,
+    },
 }
 
 #[tokio::main]
@@ -153,6 +158,9 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Cameras { action } => commands::cameras::run(&client, action, cli.json).await?,
         Command::Chimes { action } => commands::chimes::run(&client, action, cli.json).await?,
         Command::Lights { action } => commands::lights::run(&client, action, cli.json).await?,
+        Command::Liveviews { action } => {
+            commands::liveviews::run(&client, action, cli.json).await?;
+        }
     }
     Ok(())
 }

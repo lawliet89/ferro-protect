@@ -13,7 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::generated::{Camera, CameraId, Chime, ChimeId, Light, LightId, ProtectVersion};
+pub use crate::generated::{
+    Camera, CameraId, Chime, ChimeId, Light, LightId, Liveview, LiveviewId, ProtectVersion,
+};
 
 /// Application metadata returned by `GET /v1/meta/info`.
 ///
