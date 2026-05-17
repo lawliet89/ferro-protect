@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2021"
 rust-version = "1.83"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/lawliet89/ferro-protect"
 authors = ["Yong Wen Chua"]
 
