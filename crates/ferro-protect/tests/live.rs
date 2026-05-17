@@ -86,6 +86,50 @@ async fn live_read_cameras_get() {
 }
 
 #[tokio::test]
+async fn live_read_lights_list() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_lights_list: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let lights = client
+        .lights()
+        .list()
+        .await
+        .expect("lights list call succeeded");
+    println!("live_read_lights_list: {} light(s) returned", lights.len());
+    for l in &lights {
+        println!("  - {} {:?} state={}", l.id, l.name, l.state);
+    }
+}
+
+#[tokio::test]
+async fn live_read_lights_get() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_lights_get: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let lights = client
+        .lights()
+        .list()
+        .await
+        .expect("lights list call succeeded");
+    let Some(first) = lights.first() else {
+        println!("(skipping live_read_lights_get: NVR has no lights)");
+        return;
+    };
+    let fetched = client
+        .lights()
+        .get(&first.id)
+        .await
+        .expect("lights get call succeeded");
+    println!(
+        "live_read_lights_get: round-tripped {} ({:?})",
+        fetched.id, fetched.name
+    );
+    assert_eq!(fetched.id, first.id, "list+get should agree on id");
+}
+
+#[tokio::test]
 async fn live_read_chimes_list() {
     let Some(client) = common::live_client() else {
         println!("(skipping live_read_chimes_list: UNIFI_PROTECT_HOST not set)");

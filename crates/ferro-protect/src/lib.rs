@@ -42,8 +42,10 @@ mod cameras;
 mod chimes;
 mod client;
 mod generated;
+mod lights;
 
 pub use cameras::CamerasApi;
 pub use chimes::ChimesApi;
 pub use client::{ProtectClient, ProtectClientBuilder, TlsMode};
 pub use error::{Error, Result};
+pub use lights::LightsApi;

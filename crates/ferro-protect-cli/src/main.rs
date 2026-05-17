@@ -95,6 +95,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::chimes::Action,
     },
+    /// Light read endpoints.
+    Lights {
+        #[command(subcommand)]
+        action: commands::lights::Action,
+    },
 }
 
 #[tokio::main]
@@ -147,6 +152,7 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Cameras { action } => commands::cameras::run(&client, action, cli.json).await?,
         Command::Chimes { action } => commands::chimes::run(&client, action, cli.json).await?,
+        Command::Lights { action } => commands::lights::run(&client, action, cli.json).await?,
     }
     Ok(())
 }
