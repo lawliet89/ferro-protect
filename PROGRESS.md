@@ -529,8 +529,9 @@ mistake in the quick check was inspecting the wrong field.
     `featureFlags.smartDetectAudioTypes` won't surface the
     problem").
   - State the authoritative retirement test
-    (`cargo test ... --test live live_read_cameras` against a real
-    NVR) and what the failure mode looks like.
+    (`cargo test ... --test live live_read_cameras_list` and
+    `cargo test ... --test live live_read_cameras_get` against a
+    real NVR) and what the failure mode looks like.
   - Note historical confirmation that the rule was still required
     against firmware 7.1.60 in 2026-05.
 
