@@ -172,10 +172,7 @@ fn binary_rejects_when_no_key_provided() {
     use assert_cmd::Command;
     let assert = Command::cargo_bin("ferro-protect")
         .expect("binary")
-        .env_remove(ENV_KEY)
-        .env_remove(ENV_KEY_FILE)
-        .env_remove("UNIFI_PROTECT_HOST")
-        .env_remove("UNIFI_PROTECT_BASE_URL")
+        .env_clear()
         .args(["--host", "ignored", "info"])
         .assert();
     let output = assert.failure().get_output().clone();
