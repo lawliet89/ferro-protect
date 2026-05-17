@@ -13,12 +13,12 @@ not skip ahead.
 
 ## What we're building
 
-A Rust client library for the UniFi Protect API (version **6.2.83**, local API only, async) plus a CLI tool that exercises the library. Two crates in one Cargo workspace.
+A Rust client library for the UniFi Protect API (version **7.1.60**, local API only, async) plus a CLI tool that exercises the library. Two crates in one Cargo workspace.
 
 - **Library**: `ferro-protect` — async client, typed models, errors, WebSocket subscriptions.
 - **CLI**: `ferro-protect-cli` — `clap`-based binary that uses the library and serves as both a real tool and a living integration test.
 
-The OpenAPI 3.1 spec for v6.2.83 is published at <https://github.com/beezly/unifi-apis>. We will consume it as a git submodule, not vendor a copy.
+The OpenAPI 3.1 spec is published at <https://github.com/beezly/unifi-apis>. We consume it as a git submodule, not vendor a copy. The pinned version lives in `crates/ferro-protect/build.rs::SPEC_VERSION` and is currently `7.1.60`.
 
 The seven invariants every phase must preserve (single `SPEC_VERSION`,
 `models.rs` seam, mechanical wrappers, `SecretString` everywhere, etc.)
@@ -449,8 +449,21 @@ and bakes a runtime-observed token into a "pure" pipeline.
 
 **Trigger to act.** Next spec bump that adds a second runtime-vs-spec
 enum drift case (so the cost of designing the right shape is
-amortised), OR the 7.1.60 bump (where the existing marker may stop
-matching, silently making the relaxation a no-op).
+amortised), OR a live integration test against a representative NVR
+(one whose owner has actually configured smart-audio detection at
+some point) passes with the rule disabled.
+
+Confirmed 2026-05 against firmware 7.1.60: rule still required. The
+drifted value `smoke_cmonx` is persisted in per-camera
+`smartDetectSettings.audioTypes` user config, *not* in the
+`cameraFeatureFlags.smartDetectAudioTypes` capability advertisement.
+The capability field has normalised to spec values in current
+firmware, but the user-config field round-trips whatever was
+originally written by older firmware. See PROGRESS.md entry
+"Investigated retiring drop_drifted_audio_detection_enum" for the
+full retirement experiment and what to look at next time. Do not
+trust a quick `curl ... | jq .featureFlags.smartDetectAudioTypes`
+check — it inspects the wrong field.
 
 **Two viable fix shapes.**
 
@@ -476,7 +489,7 @@ hand-written wrappers have appeared in the meantime.
 ## Reference: spec source
 
 - Repo: <https://github.com/beezly/unifi-apis>
-- Path in submodule: `third_party/unifi-apis/unifi-protect/6.2.83.json`
+- Path in submodule: `third_party/unifi-apis/unifi-protect/{SPEC_VERSION}.json` (currently `7.1.60.json`)
 - Format: OpenAPI 3.1.0; consumed as JSON Schema by typify with minor preprocessing (see phase 1)
 - Base URL pattern: `https://{nvr-host}/proxy/protect/integration` (spec server is `/integration`, paths begin with `/v1/...`)
 - Auth: `X-API-Key` request header

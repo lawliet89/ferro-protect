@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::doc_markdown)]
 
-//! Async Rust client for the UniFi Protect local integration API (v6.2.83).
+//! Async Rust client for the UniFi Protect local integration API (v7.1.60).
 //!
 //! ```no_run
 //! # async fn run() -> ferro_protect::Result<()> {

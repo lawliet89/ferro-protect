@@ -421,3 +421,126 @@ Replaced the CLI's hand-rolled table renderer with a `comfy-table`-backed implem
 - Kept `render_one()` manual and extracted only optional-value formatting as a shared helper, matching the chore's recommended scope.
 
 **Next**: Continue phase 4 entity coverage using the same `output::table` + manual `render_one` convention.
+
+## 2026-05-17 16:18 +0800 — Spec bump: 6.2.83 → 7.1.60
+
+**Status**: complete
+
+**Summary**:
+Bumped `SPEC_VERSION` in `crates/ferro-protect/build.rs` from `6.2.83`
+to `7.1.60` (the latest version available in the pinned submodule
+commit). Required one new preprocessing rule in
+`build_support/spec_rewrite.rs` to handle a typify naming collision
+introduced by the new bulk-operation schemas; no wrapper or
+`models.rs` changes were needed beyond that. All four gates green.
+
+**Files added/changed**:
+- `crates/ferro-protect/build.rs` (SPEC_VERSION constant)
+- `crates/ferro-protect/build_support/spec_rewrite.rs` (new
+  `lift_inline_one_or_array_refs` pass)
+- `PROGRESS.md`
+
+**Decisions / deviations**:
+- Did not move the `third_party/unifi-apis` submodule SHA; 7.1.60 was
+  already present in the currently pinned commit. Bumping the
+  submodule pin is a separate, intentional change worth its own
+  commit when we have a reason.
+- The new bulk-operation schemas (`deviceBulkReference`, `deviceBulk`,
+  `deviceBulkPartialWithReference`, plus the consumers
+  `devicesAdd`/`devicesBulkUpdate`/`devicesBulkRemove` and the
+  `deviceEvent` WebSocket message) contain inline
+  `anyOf: [{$ref: X}, {type: array, items: {$ref: X}}]` patterns at
+  every "id" property. Typify, when generating a name for each inline
+  anyOf, derives it from the inner `$ref` -- producing `ViewerId`
+  from a `viewerId` ref, which collides with the top-level `ViewerId`
+  typify already generates from the `viewerId` schema itself. Nine
+  entities affected: Viewer, Speaker, Siren, Sensor, Relay, Nvr,
+  LinkStation, Light, Fob. Without preprocessing this produced 207
+  compile errors (one duplicate definition + eight conflicting trait
+  impls + ten variant-not-found errors per entity).
+- Resolved by adding `lift_inline_one_or_array_refs`: a preprocessing
+  pass that walks every top-level schema body, detects the inline
+  one-or-array anyOf pattern, synthesises a top-level
+  `<innerName>OrArray` schema (e.g. `viewerIdOrArray`), and replaces
+  the inline anyOf with a `$ref` to the synthesised schema.
+  Synthesis is idempotent -- the same inner ref always lifts to the
+  same name regardless of how many parent schemas reference it.
+  Twelve `<entity>IdOrArray` types are now generated cleanly.
+- Considered and rejected: skipping the bulk schemas via an allowlist
+  in `build.rs`. Would have hidden the problem rather than solving
+  it, and would have required hand-writing `deviceEvent` in phase 9
+  when the websocket subscriber needs the bulk variants.
+- The `drop_drifted_audio_detection_enum` deferred item (PLAN.md) did
+  not fire its trigger: `alrmCmonx` is still present in 7.1.60's
+  `smartDetectAudioTypes` enum, so the value-sniffing rule remains
+  load-bearing. Leave it as-is until the marker disappears.
+- The `ProtectVersion`/`CameraId` newtype seam-tunnelling deferred
+  item also did not fire: no generated type was renamed in this
+  bump.
+
+**Next**: Phase 4c (lights read endpoints) on `7.1.60`. Live tests
+against the user's 7.1.60 NVR should now exercise the same wire
+protocol the library is built against.
+
+## 2026-05-17 17:00 +0800 — Investigated retiring `drop_drifted_audio_detection_enum`
+
+**Status**: complete (rule kept; trigger condition revised)
+
+**Summary**:
+After the 7.1.60 bump, looked at whether the
+`drop_drifted_audio_detection_enum` workaround could be retired now
+that the spec and the test NVR agree on the `alrmCmonx` family of
+values. A quick `curl ... | jq '.[].featureFlags.smartDetectAudioTypes'`
+returned only spec-listed values, which initially suggested the drift
+was gone and the rule could go. **It cannot.** A live integration
+test with the rule disabled failed with
+`unknown variant 'smoke_cmonx'`. The drift is alive and well; the
+mistake in the quick check was inspecting the wrong field.
+
+**Files added/changed**:
+- `crates/ferro-protect/build_support/spec_rewrite.rs` (rule kept,
+  docstring rewritten to record what the failed retirement attempt
+  taught us)
+- `PROGRESS.md`
+
+**Decisions / deviations**:
+- The drifted value lives in `smartDetectSettings.audioTypes`
+  (per-camera **user config** — what the camera is *configured to
+  detect*), not `cameraFeatureFlags.smartDetectAudioTypes` (per-camera
+  **capability advertisement** — what the camera *can* detect). The
+  capability field has been normalised to spec values in current
+  firmware; the user-config field still round-trips whatever value
+  was originally written there, including `smoke_cmonx` from older
+  firmware versions. Two of five test cameras have `smoke_cmonx`
+  persisted in `smartDetectSettings.audioTypes`.
+- This means the rule cannot be retired purely by waiting for
+  firmware to stop emitting `smoke_cmonx`. The drifted value will
+  persist in NVR configuration until either (a) the affected cameras
+  are reconfigured (user re-saves their smart-audio settings under
+  current firmware) or (b) the NVR migrates the stored value on
+  upgrade. Neither is something we control.
+- We can't just rename `smoke_cmonx` → `alrmCmonx` on the wire
+  either, because PATCH endpoints round-trip the value. The
+  `String`-instead-of-`enum` relaxation remains the right shape.
+- Rule retained. Docstring rewritten to:
+  - Name the actual field where the drift lives
+    (`smartDetectSettings.audioTypes`).
+  - Warn against the trap I just fell into ("a quick curl on
+    `featureFlags.smartDetectAudioTypes` won't surface the
+    problem").
+  - State the authoritative retirement test
+    (`cargo test ... --test live live_read_cameras_list` and
+    `cargo test ... --test live live_read_cameras_get` against a
+    real NVR) and what the failure mode looks like.
+  - Note historical confirmation that the rule was still required
+    against firmware 7.1.60 in 2026-05.
+
+- PLAN.md "Deferred" item for this rule is also revised: the trigger
+  is no longer just "the marker disappears from the spec" or "second
+  drift case appears." It is now "live test against a representative
+  NVR (one whose owner has actually configured smart-audio
+  detection) passes with the rule disabled." Updating PLAN.md in the
+  same commit.
+
+**Next**: Continue phase 4 work. No code action on this rule until
+the trigger fires.
