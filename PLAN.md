@@ -698,6 +698,70 @@ If the WebSocket framing turns out to differ from straight JSON-over-WS (it has 
 
 ---
 
+## Deferred — revisit before 0.1.0 (or when the trigger fires)
+
+Items surfaced during reviews that are not bugs and not blocking, but
+that the next reader should weigh deliberately rather than rediscover.
+Move each into a phase when the trigger condition is met, or close it
+out in `PROGRESS.md` with a "won't do" rationale.
+
+### Seal the `models.rs` seam against typify newtype tunneling
+
+**Symptom.** Typify renders string-shaped schemas (`ProtectVersion`,
+`CameraId`, `ChimeId`, `Name`, `Mac`, etc.) as `pub struct Foo(pub
+String)`. `models.rs` re-exports these as-is, so downstream callers can
+reach past the seam with `id.0` or pattern-match against the literal
+`(pub String)` shape. The "single seam" promise is that `models.rs` is
+the one fix-site for a spec bump; `.0` tunnelling breaks that.
+
+**Trigger to act.** First spec bump that renames or restructures one of
+these newtypes, OR the first external (out-of-tree) consumer of the
+library. Until either fires, the cost (≈4–8 hand-written newtypes with
+`Serialize`/`Deserialize`/`Display`/`From`/`AsRef<str>` impls each,
+plus serde plumbing) outweighs the benefit.
+
+**Fix shape, when adopted.** Hand-written wrapper newtypes in
+`models.rs` that wrap (not re-export) the generated type with a private
+inner field, `#[serde(transparent)]` for wire compatibility, and the
+minimum trait set wrappers need. Originally raised in the oas3 PR
+review; deferred there as architectural rather than a drive-by fix.
+
+### Reshape `drop_drifted_audio_detection_enum` away from value-sniffing
+
+**Symptom.** [build_support/spec_rewrite.rs](crates/ferro-protect/build_support/spec_rewrite.rs)
+contains a preprocessing function that matches on the literal string
+`"alrmCmonx"` to detect the smart-audio-detection enum and relax it to
+a plain `String`. Every other function in the file matches on JSON
+Schema structure (`type: ["X", "null"]`, `const`, `allOf: [<$ref>]`),
+so this one breaks the file's "pure structural preprocessing" pretense
+and bakes a runtime-observed token into a "pure" pipeline.
+
+**Trigger to act.** Next spec bump that adds a second runtime-vs-spec
+enum drift case (so the cost of designing the right shape is
+amortised), OR the 7.1.60 bump (where the existing marker may stop
+matching, silently making the relaxation a no-op).
+
+**Two viable fix shapes.**
+
+1. *Named-target preprocessing list.* Add a `RELAX_ENUMS: &[&str] =
+   &["smartDetectAudioTypes", ...]` table at the top of
+   `spec_rewrite.rs` plus a function that walks
+   `components.schemas.<name>` and strips `enum`. Keeps preprocessing
+   pure (structural lookup) and extending it for new drift cases is one
+   line. Cheapest move.
+2. *Hand-written newtype in `models.rs`.* Define
+   `pub struct SmartDetectAudioType(String)` and skip the schema during
+   codegen via a typify allowlist. Architecturally cleaner — schema
+   preprocessing stops carrying runtime knowledge entirely — but
+   commits us to allowlist machinery that nothing else needs yet. Pays
+   off only if `models.rs` ends up with several other hand-written
+   wrappers.
+
+Default recommendation when the trigger fires: option 1, unless other
+hand-written wrappers have appeared in the meantime.
+
+---
+
 ## Reference: spec source
 
 - Repo: <https://github.com/beezly/unifi-apis>
