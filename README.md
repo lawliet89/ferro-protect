@@ -14,6 +14,36 @@ New to the codebase? Start with [ARCHITECTURE.md](ARCHITECTURE.md) — it
 covers the philosophy, the codegen seam, the file map, and a suggested
 reading order before you open any source file.
 
+## Device coverage disclaimer
+
+The maintainer's personal UniFi Protect setup does not include every
+device type Protect supports. For device categories the maintainer
+cannot observe directly, the implementation is built purely from the
+OpenAPI spec and exercised only by mocked integration tests; the live
+test suite skips the corresponding `live_read_*` checks gracefully
+when the NVR has none of that device type.
+
+In practice this means the *shape* of every endpoint is verified
+(URL routing, error mapping, JSON deserialisation against the spec),
+but the *spec-vs-firmware drift* surface — the kind of mismatch that
+[surfaced for smart-audio detection on cameras](crates/ferro-protect/build_support/spec_rewrite.rs)
+— has only been validated against the subset of device types in the
+maintainer's lab. There may be similar drift on other device types
+nobody on this side has live access to.
+
+If you run a Protect installation with devices the test fleet
+doesn't cover, **PRs are very welcome.** The most useful
+contributions are:
+
+- Running `./scripts/live-test` against your NVR and reporting any
+  `unknown variant` / deserialize failures.
+- Adding a new `spec_rewrite.rs` preprocessing rule if a device
+  exposes a runtime value missing from the spec (see
+  `drop_drifted_audio_detection_enum` for the pattern).
+- Adding a small fixture-backed mocked test under
+  `crates/ferro-protect/tests/fixtures/` if you can share a sanitised
+  example of a response your firmware emits.
+
 ## Clone
 
 ```sh
