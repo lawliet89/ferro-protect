@@ -486,6 +486,60 @@ check — it inspects the wrong field.
 Default recommendation when the trigger fires: option 1, unless other
 hand-written wrappers have appeared in the meantime.
 
+### Replace per-permit `tokio::spawn` in `AdaptiveLimiter::acquire`
+
+**Symptom.** [crates/ferro-protect/src/rate_limit.rs](crates/ferro-protect/src/rate_limit.rs)
+spawns a short-lived tokio task for every acquired permit to release
+it after the rate-limit window. At Protect's advertised 10/sec budget
+this is ≈10 tasks/sec, well below any meaningful scheduler overhead,
+but the pattern scales linearly with traffic and a future caller with
+a higher-quota deployment (or aggregated multi-NVR usage) could
+notice.
+
+**Trigger to act.** A user files a perf issue, OR profiling shows
+spawn/sleep overhead is a measurable share of client runtime, OR the
+client is repurposed for higher-RPS scenarios.
+
+**Fix shape, when adopted.** Replace the per-acquire `tokio::spawn`
+with either (a) a single background refill task that adds permits at
+the appropriate cadence, or (b) a permit guard whose `Drop` enqueues
+itself onto a shared delay-queue serviced by one task. Both eliminate
+the per-request task without changing the public API or the
+sliding-window semantics.
+
+Originally raised in [PR #6 review](https://github.com/lawliet89/ferro-protect/pull/6#discussion_r3254525885);
+deferred there as a perf optimisation for a load profile the client
+does not actually have today.
+
+### Switch rate-limit integration tests to paused tokio time
+
+**Symptom.** [crates/ferro-protect/tests/rate_limit.rs](crates/ferro-protect/tests/rate_limit.rs)
+uses wall-clock `std::time::Instant` assertions and real sleeps for
+the Retry-After-honour and burst-throttle tests, costing ~2s of
+suite wall time and exposing the tests to flake under CI contention.
+
+**Trigger to act.** Either of: the tests start flaking on CI (look
+for "expected ~1s, got" timing assertion failures); a future rewrite
+needs to assert behaviour at higher window counts where real time
+would dominate the suite; or the rate-limit module grows enough
+mocked-integration tests that the cumulative wall-time matters.
+
+**Fix shape, when adopted.** The unit tests in
+[rate_limit.rs](crates/ferro-protect/src/rate_limit.rs) already use
+`#[tokio::test(flavor = "current_thread", start_paused = true)]` and
+`tokio::time::Instant::now().elapsed()`. The integration tests cannot
+trivially copy that pattern because `wiremock` runs its HTTP server
+on its own task in real time, so paused time only affects the retry
+sleep inside the middleware, not the request round-trip. The
+adoption design needs to bracket the paused-time window around just
+the post-response sleep — likely by spying on the middleware's sleep
+calls (custom `Clock` trait injected through the builder) rather
+than by trying to pause tokio globally.
+
+Originally raised in [PR #6 review](https://github.com/lawliet89/ferro-protect/pull/6#discussion_r3254525890);
+deferred there because the savings (~1s of suite time, once per run)
+do not justify the cross-task-context complexity today.
+
 ---
 
 ## Reference: spec source
