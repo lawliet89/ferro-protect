@@ -251,8 +251,20 @@ fn lift_descend(
 
 /// Return `Some(inner_ref)` when `map` is exactly
 /// `anyOf: [{$ref: X}, {type: "array", items: {$ref: X}}]`
-/// with the two refs identical and no other sibling keys.
+/// with the two refs identical and no other sibling keys anywhere in
+/// the structure.
+///
+/// The exact-shape check matters: if we accept patterns with extra
+/// sibling constraints (e.g. `minItems`, `uniqueItems`, descriptions
+/// on either branch), the lifted top-level schema -- which we build
+/// fresh from just the inner ref -- would silently drop those
+/// constraints and change the spec's semantics. By refusing to match
+/// anything but the exact minimal shape, we either lift cleanly or
+/// don't lift at all; a future spec that uses a richer variant will
+/// surface as a typify naming collision (the original symptom) and
+/// can be addressed deliberately.
 fn match_one_or_array_ref(map: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    // Outer object: must be exactly `{"anyOf": [...]}`.
     if map.len() != 1 {
         return None;
     }
@@ -262,16 +274,28 @@ fn match_one_or_array_ref(map: &serde_json::Map<String, serde_json::Value>) -> O
     if items.len() != 2 {
         return None;
     }
-    let single_ref = items[0].as_object()?.get("$ref")?.as_str()?;
+
+    // Branch 0: must be exactly `{"$ref": "..."}`.
+    let single_branch = items[0].as_object()?;
+    if single_branch.len() != 1 {
+        return None;
+    }
+    let single_ref = single_branch.get("$ref")?.as_str()?;
+
+    // Branch 1: must be exactly `{"type": "array", "items": {"$ref": "..."}}`.
     let array_branch = items[1].as_object()?;
+    if array_branch.len() != 2 {
+        return None;
+    }
     if array_branch.get("type")?.as_str()? != "array" {
         return None;
     }
-    let array_inner_ref = array_branch
-        .get("items")?
-        .as_object()?
-        .get("$ref")?
-        .as_str()?;
+    let array_items = array_branch.get("items")?.as_object()?;
+    if array_items.len() != 1 {
+        return None;
+    }
+    let array_inner_ref = array_items.get("$ref")?.as_str()?;
+
     if single_ref != array_inner_ref {
         return None;
     }
