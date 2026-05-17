@@ -1,6 +1,6 @@
 //! Chime read endpoints. PATCH and action endpoints land in phases 5/6.
 
-use log::{debug, info};
+use log::info;
 
 use crate::client::ProtectClient;
 use crate::error::Result;
@@ -33,7 +33,6 @@ impl<'a> ChimesApi<'a> {
     /// unknown ID, or `Json` if the response body fails the schema.
     pub async fn get(&self, id: &ChimeId) -> Result<Chime> {
         let path = format!("/v1/chimes/{id}");
-        debug!("GET {path}");
         let chime: Chime = self.client.get_json(&path).await?;
         info!("fetched chime {}", chime.id);
         Ok(chime)

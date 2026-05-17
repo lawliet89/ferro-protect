@@ -1,6 +1,6 @@
 //! Camera read endpoints. PATCH and action endpoints land in phases 5/6/7.
 
-use log::{debug, info};
+use log::info;
 
 use crate::client::ProtectClient;
 use crate::error::Result;
@@ -34,7 +34,6 @@ impl<'a> CamerasApi<'a> {
     /// unknown ID, or `Json` if the response body fails the schema.
     pub async fn get(&self, id: &CameraId) -> Result<Camera> {
         let path = format!("/v1/cameras/{id}");
-        debug!("GET {path}");
         let camera: Camera = self.client.get_json(&path).await?;
         info!("fetched camera {}", camera.id);
         Ok(camera)
