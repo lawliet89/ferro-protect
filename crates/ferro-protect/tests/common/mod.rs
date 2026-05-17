@@ -42,7 +42,7 @@ pub fn live_client() -> Option<ProtectClient> {
         panic!("{HOST_ENV} is set but no key source: set {KEY_FILE_ENV} (preferred) or {KEY_ENV}");
     };
 
-    let insecure = std::env::var(INSECURE_ENV).is_ok_and(|v| !v.is_empty());
+    let insecure = parse_boolish_env(INSECURE_ENV);
 
     let mut builder = ProtectClient::builder().host(host).api_key(key);
     if insecure {
@@ -61,8 +61,29 @@ pub fn live_client() -> Option<ProtectClient> {
     Some(builder.build().expect("live client builds"))
 }
 
-/// `true` only when `UNIFI_PROTECT_ALLOW_MUTATIONS=1`. Gates any test
-/// that writes to the NVR -- PATCH, action POSTs, file uploads.
+/// `true` only when `UNIFI_PROTECT_ALLOW_MUTATIONS` resolves to a
+/// truthy value (`1`, `true`, `yes`, `on`). Gates any test that writes
+/// to the NVR -- PATCH, action POSTs, file uploads. Kept strict on the
+/// truthy side and forgiving on the falsy side so a stray `=0` in
+/// `.env.local` is unambiguously off.
 pub fn mutations_allowed() -> bool {
-    std::env::var(ALLOW_MUTATIONS_ENV).is_ok_and(|v| v == "1")
+    parse_boolish_env(ALLOW_MUTATIONS_ENV)
+}
+
+/// Boolish parsing that matches the CLI's `--insecure` flag behaviour
+/// (clap's `BoolishValueParser`). Empty / `0` / `false` / `no` / `off`
+/// (case-insensitive) -> false; `1` / `true` / `yes` / `on` -> true;
+/// missing -> false; anything else -> panic so the misconfiguration is
+/// loud.
+fn parse_boolish_env(name: &str) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return false;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "0" | "false" | "no" | "off" => false,
+        "1" | "true" | "yes" | "on" => true,
+        other => panic!(
+            "{name} has unrecognised value {other:?}; use one of 1/true/yes/on or 0/false/no/off"
+        ),
+    }
 }
