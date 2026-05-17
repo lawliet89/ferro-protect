@@ -41,7 +41,12 @@ Current preprocessing:
 - strip `additionalProperties: false` whenever a combinator is in scope
 - relax string enums whose variants collide after Rust identifier sanitizing
 - relax the smart-audio detection enum because live 6.2.x devices can return
-  values missing from the published 6.2.83 spec
+  values missing from the published 6.2.83 spec (still load-bearing in 7.1.60;
+  the marker enum value is unchanged)
+- lift inline `anyOf: [{$ref: X}, {type: array, items: {$ref: X}}]` patterns
+  out into named top-level `<X>OrArray` schemas to avoid typify naming
+  collisions with the top-level `X` (added for 7.1.60 bulk-operation
+  schemas)
 
 If typify fails on a new schema construct, prefer a narrow preprocessing rule
 in `build_support/spec_rewrite.rs`. If only one schema is problematic and the

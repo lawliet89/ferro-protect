@@ -13,6 +13,7 @@
 /// Pure function: same input always produces same output.
 pub fn rewrite(raw: serde_json::Value) -> serde_json::Value {
     let mut value = raw;
+    lift_inline_one_or_array_refs(&mut value);
     preprocess_for_typify(&mut value);
     value
 }
@@ -145,6 +146,125 @@ fn drop_drifted_audio_detection_enum(map: &mut serde_json::Map<String, serde_jso
     {
         map.remove("enum");
     }
+}
+
+/// Lift inline `anyOf: [{$ref: X}, {type: array, items: {$ref: X}}]` patterns
+/// out into named top-level schemas with stable, distinct names.
+///
+/// Protect 7.1.60 added bulk-operation schemas (`deviceBulkReference` and
+/// friends) that express "one entity ID or an array of entity IDs" inline
+/// dozens of times. Typify, when generating a name for each inline anyOf,
+/// derives it from the inner `$ref` -- producing `ViewerId` from a `viewerId`
+/// ref, which then collides with the top-level `ViewerId` typify generates
+/// for the `viewerId` schema itself. The result is duplicate definitions and
+/// roughly 200 compile errors per spec bump that adds another such schema.
+///
+/// We sidestep the naming clash by synthesising a top-level
+/// `<inner>OrArray` schema (e.g. `viewerIdOrArray`) for each unique inner
+/// ref we see, and replacing the inline anyOf with a $ref to it. Each
+/// resulting Rust type has a clear single source of truth and a name that
+/// does not collide. Synthesis is idempotent: the same inner ref always
+/// produces the same lifted schema, even if it appears in fifteen
+/// different parent schemas.
+fn lift_inline_one_or_array_refs(value: &mut serde_json::Value) {
+    let mut synthesised: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    let Some(schemas) = value
+        .pointer_mut("/components/schemas")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+
+    // Walk every top-level schema body, replacing inline patterns and
+    // recording the names we synthesise as we go.
+    for schema_body in schemas.values_mut() {
+        lift_descend(schema_body, &mut synthesised);
+    }
+
+    // Add synthesised schemas to components.schemas if they don't already
+    // exist. We only insert; never overwrite, so a spec that already
+    // happens to define `viewerIdOrArray` wins.
+    for (name, schema) in synthesised {
+        schemas.entry(name).or_insert(schema);
+    }
+}
+
+fn lift_descend(
+    value: &mut serde_json::Value,
+    synthesised: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(inner_ref) = match_one_or_array_ref(map) {
+                // Derive the schema name from the inner ref's last segment.
+                // `#/components/schemas/viewerId` -> `viewerId` -> `viewerIdOrArray`.
+                let inner_name = inner_ref
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&inner_ref)
+                    .to_string();
+                let lifted_name = format!("{inner_name}OrArray");
+                let lifted_ref = format!("#/components/schemas/{lifted_name}");
+
+                // Record the synthesised schema (idempotent on subsequent hits).
+                synthesised
+                    .entry(lifted_name)
+                    .or_insert_with(|| build_one_or_array_schema(&inner_ref));
+
+                // Replace the inline anyOf with a $ref to the lifted schema.
+                map.clear();
+                map.insert("$ref".to_string(), serde_json::Value::String(lifted_ref));
+                return;
+            }
+            for v in map.values_mut() {
+                lift_descend(v, synthesised);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                lift_descend(v, synthesised);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Return `Some(inner_ref)` when `map` is exactly
+/// `anyOf: [{$ref: X}, {type: "array", items: {$ref: X}}]`
+/// with the two refs identical and no other sibling keys.
+fn match_one_or_array_ref(map: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    if map.len() != 1 {
+        return None;
+    }
+    let serde_json::Value::Array(items) = map.get("anyOf")? else {
+        return None;
+    };
+    if items.len() != 2 {
+        return None;
+    }
+    let single_ref = items[0].as_object()?.get("$ref")?.as_str()?;
+    let array_branch = items[1].as_object()?;
+    if array_branch.get("type")?.as_str()? != "array" {
+        return None;
+    }
+    let array_inner_ref = array_branch
+        .get("items")?
+        .as_object()?
+        .get("$ref")?
+        .as_str()?;
+    if single_ref != array_inner_ref {
+        return None;
+    }
+    Some(single_ref.to_string())
+}
+
+fn build_one_or_array_schema(inner_ref: &str) -> serde_json::Value {
+    serde_json::json!({
+        "anyOf": [
+            { "$ref": inner_ref },
+            { "type": "array", "items": { "$ref": inner_ref } }
+        ]
+    })
 }
 
 /// Drop `additionalProperties: false` when the schema also uses a combinator
