@@ -105,7 +105,7 @@ enum Command {
         #[command(subcommand)]
         action: commands::liveviews::Action,
     },
-    /// NVR read endpoint (list only; one per installation).
+    /// NVR read endpoint (get only; one per installation).
     Nvrs {
         #[command(subcommand)]
         action: commands::nvrs::Action,
