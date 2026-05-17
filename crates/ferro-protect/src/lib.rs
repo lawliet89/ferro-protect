@@ -42,8 +42,18 @@ mod cameras;
 mod chimes;
 mod client;
 mod generated;
+mod lights;
+mod liveviews;
+mod nvrs;
+mod sensors;
+mod viewers;
 
 pub use cameras::CamerasApi;
 pub use chimes::ChimesApi;
 pub use client::{ProtectClient, ProtectClientBuilder, TlsMode};
 pub use error::{Error, Result};
+pub use lights::LightsApi;
+pub use liveviews::LiveviewsApi;
+pub use nvrs::NvrsApi;
+pub use sensors::SensorsApi;
+pub use viewers::ViewersApi;

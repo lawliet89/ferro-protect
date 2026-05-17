@@ -95,6 +95,31 @@ enum Command {
         #[command(subcommand)]
         action: commands::chimes::Action,
     },
+    /// Light read endpoints.
+    Lights {
+        #[command(subcommand)]
+        action: commands::lights::Action,
+    },
+    /// Liveview read endpoints.
+    Liveviews {
+        #[command(subcommand)]
+        action: commands::liveviews::Action,
+    },
+    /// NVR read endpoint (get only; one per installation).
+    Nvrs {
+        #[command(subcommand)]
+        action: commands::nvrs::Action,
+    },
+    /// Sensor read endpoints.
+    Sensors {
+        #[command(subcommand)]
+        action: commands::sensors::Action,
+    },
+    /// Viewer read endpoints.
+    Viewers {
+        #[command(subcommand)]
+        action: commands::viewers::Action,
+    },
 }
 
 #[tokio::main]
@@ -147,6 +172,13 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Cameras { action } => commands::cameras::run(&client, action, cli.json).await?,
         Command::Chimes { action } => commands::chimes::run(&client, action, cli.json).await?,
+        Command::Lights { action } => commands::lights::run(&client, action, cli.json).await?,
+        Command::Liveviews { action } => {
+            commands::liveviews::run(&client, action, cli.json).await?;
+        }
+        Command::Nvrs { action } => commands::nvrs::run(&client, action, cli.json).await?,
+        Command::Sensors { action } => commands::sensors::run(&client, action, cli.json).await?,
+        Command::Viewers { action } => commands::viewers::run(&client, action, cli.json).await?,
     }
     Ok(())
 }

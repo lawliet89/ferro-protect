@@ -1,0 +1,21 @@
+{
+  "id": "test-nvr-1",
+  "modelKey": "nvr",
+  "name": "Test NVR",
+  "doorbellSettings": {
+    "defaultMessageText": "WELCOME",
+    "defaultMessageResetTimeoutMs": 60000,
+    "customMessages": [],
+    "customImages": []
+  },
+  "armMode": {
+    "status": "disabled",
+    "armProfileId": "",
+    "armedAt": null,
+    "willBeArmedAt": null,
+    "breachDetectedAt": null,
+    "breachEventCount": 0,
+    "breachTriggerEventId": null,
+    "breachEventId": null
+  }
+}
