@@ -48,3 +48,11 @@ unsafe_code = "forbid"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# insta's snapshot diffs run on every `cargo test`; compiling insta and
+# its `similar` diff backend at -O3 even in dev/test profiles cuts the
+# diff time on large snapshots from seconds to milliseconds. Only pays a
+# one-time compile cost. Recommended in the insta docs.
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
