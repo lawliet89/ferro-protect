@@ -27,15 +27,15 @@ jobs:
         with:
           submodules: recursive
 
-      # Safety belt: live tests are gated by FERRO_PROTECT_LIVE_* env vars
+      # Safety belt: live tests + CLI both read UNIFI_PROTECT_* env vars
       # and would happily hit a real NVR if any of them leaked into the
       # runner environment (e.g. via a repo secret misconfigured as a var).
       # Fail loud and early instead.
-      - name: Forbid live-test env vars in CI
+      - name: Forbid live-NVR env vars in CI
         run: |
-          if env | grep -q '^FERRO_PROTECT_LIVE_'; then
-            echo "::error::FERRO_PROTECT_LIVE_* env vars must not be set in CI" >&2
-            env | grep '^FERRO_PROTECT_LIVE_' >&2 || true
+          if env | grep -q '^UNIFI_PROTECT_'; then
+            echo "::error::UNIFI_PROTECT_* env vars must not be set in CI" >&2
+            env | grep '^UNIFI_PROTECT_' >&2 || true
             exit 1
           fi
 

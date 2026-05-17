@@ -154,8 +154,10 @@ These hold across every phase. PLAN.md treats them as non-negotiable.
    four.
 6. **API keys live in `SecretString`** end to end — flag value, builder
    field, header value (with `set_sensitive(true)`). Never `String`.
-7. **`FERRO_PROTECT_LIVE_*` prefix is reserved for live tests only.**
-   CI fails fast if any such env var leaks into the runner.
+7. **`UNIFI_PROTECT_*` env vars are forbidden in CI.** Both the CLI and
+   the live tests read this prefix; their presence in a CI runner would
+   silently hit a real NVR. The CI workflow fails fast if any such var
+   is set.
 
 ---
 
@@ -171,11 +173,11 @@ The current state. Updated whenever the structure changes.
 | [rust-toolchain.toml](rust-toolchain.toml) | Pins stable channel + components. |
 | [rustfmt.toml](rustfmt.toml) | `edition = "2021"`, `max_width = 100`. |
 | [deny.toml](deny.toml) | License allow-list, advisory checks, source allow-list (includes the unifi-apis submodule URL). |
-| [.github/workflows/ci.yml](.github/workflows/ci.yml) | fmt → clippy → test → deny. Refuses to run if `FERRO_PROTECT_LIVE_*` env vars are present. |
+| [.github/workflows/ci.yml](.github/workflows/ci.yml) | fmt → clippy → test → deny. Refuses to run if `UNIFI_PROTECT_*` env vars are present. |
 | [scripts/pre-commit](scripts/pre-commit) | Local hook: fmt + clippy. |
 | [scripts/update-spec](scripts/update-spec) | One-command spec version bump. |
 | [scripts/live-test](scripts/live-test) | Sources `.env.local`, runs the live integration tests with `--features dangerous-tls`. |
-| [.env.example](.env.example) | Template for `FERRO_PROTECT_LIVE_*` vars. |
+| [.env.example](.env.example) | Template for `UNIFI_PROTECT_*` vars. |
 
 ### `crates/ferro-protect/` (library)
 
@@ -277,12 +279,12 @@ Three layers, all driven by `cargo test --all`. None are `#[ignore]`d.
    reactor hosting the mock server.
 3. **Live integration** — `crates/ferro-protect/tests/live.rs` runs
    against a real NVR. Each test calls `common::live_client()` at the
-   top; if `FERRO_PROTECT_LIVE_HOST` is unset the helper returns `None`
+   top; if `UNIFI_PROTECT_HOST` is unset the helper returns `None`
    and the test early-returns with a printed skip message. When `HOST`
    is set but no key source is, the helper *panics* — a half-configured
    live env is almost always a developer mistake we want surfaced.
    Mutating tests (`live_write_*`, coming in later phases) gate
-   additionally on `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1` via
+   additionally on `UNIFI_PROTECT_ALLOW_MUTATIONS=1` via
    `common::mutations_allowed()`.
 
 `insta` snapshots are used **only** for outputs of deterministic, pure
@@ -292,7 +294,7 @@ deliberately not used for response bodies — those should be asserted on
 specific fields so a test's intent stays readable.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) explicitly
-errors out if any `FERRO_PROTECT_LIVE_*` env var is present in the
+errors out if any `UNIFI_PROTECT_*` env var is present in the
 runner environment, so a leaked secret cannot accidentally hit a real
 NVR from a PR build.
 

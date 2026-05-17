@@ -155,26 +155,46 @@ Every endpoint that lands in this codebase has, at minimum:
 
 ### Live test env-var contract
 
-All env vars are prefixed `FERRO_PROTECT_LIVE_` to be impossible to confuse with
-the CLI's normal `UNIFI_PROTECT_*` envs:
+All env vars share the `UNIFI_PROTECT_` prefix with the CLI.
 
-- `FERRO_PROTECT_LIVE_HOST` — NVR hostname or IP. **Required**; absence means
-  all live tests skip.
-- `FERRO_PROTECT_LIVE_API_KEY_FILE` or `FERRO_PROTECT_LIVE_API_KEY` — at least
-  one required when `HOST` is set. File path or raw key, respectively.
-- `FERRO_PROTECT_LIVE_INSECURE` — set to `1` to accept self-signed TLS for the
-  live test session. Optional.
-- `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS` — set to `1` to permit live tests that
-  write to the NVR (PATCHes, POSTs to action endpoints, file uploads). Optional;
-  defaults to off so a routine `cargo test` cannot accidentally ring a siren,
-  reboot a camera, or modify a recording mode.
+**This is a purely ergonomic decision for the human running live tests**,
+not an architectural one. A developer who has configured their shell to
+talk to their NVR (HOST + API key file) almost always wants both the live
+test suite *and* ad-hoc `cargo run -p ferro-protect-cli -- info`
+invocations to work from the same sourced `.env.local` -- one file, one
+`source`, both work.
+
+Earlier iterations of this plan used a distinct `FERRO_PROTECT_LIVE_*`
+prefix as a belt-and-braces safeguard against `cargo test` accidentally
+firing requests at a real NVR when the developer just happened to have
+the CLI's env vars set. In practice that was good intent at a high
+ergonomic cost (two parallel sets of env vars to maintain in every
+developer's shell), and the residual risk is small: read-only live tests
+calling `info` against a real NVR are harmless, and write-side tests are
+gated separately by `UNIFI_PROTECT_ALLOW_MUTATIONS`. The CI guard step
+below covers the one accidental-activation case that genuinely matters
+(a leaked credential firing during a PR build).
+
+- `UNIFI_PROTECT_HOST` — NVR hostname or `host:port` (no scheme prefix; the
+  client always wraps as `https://{host}/proxy/protect/integration`).
+  **Required**; absence means all live tests skip.
+- `UNIFI_PROTECT_API_KEY_FILE` or `UNIFI_PROTECT_API_KEY` — at least one
+  required when `HOST` is set. File path or raw key, respectively.
+- `UNIFI_PROTECT_INSECURE` — set to a non-empty value to accept self-signed
+  TLS. Honoured by both the CLI's `--insecure` flag and the live-test
+  helper. Optional.
+- `UNIFI_PROTECT_ALLOW_MUTATIONS` — set to `1` to permit live tests that
+  write to the NVR (PATCHes, POSTs to action endpoints, file uploads).
+  Optional; defaults to off so a routine `cargo test` cannot accidentally
+  ring a siren, reboot a camera, or modify a recording mode. The CLI does
+  not read this variable -- it is purely a test gate.
 
 ### Test naming convention
 
 - `live_read_*` — non-mutating live tests. Skip when `HOST` is absent. Allowed
   to run freely whenever the NVR is reachable.
 - `live_write_*` — mutating live tests. Skip when `HOST` is absent **or** when
-  `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1` is absent.
+  `UNIFI_PROTECT_ALLOW_MUTATIONS=1` is absent.
 
 Implement a shared helper module at `crates/ferro-protect/tests/common/mod.rs`
 that exposes:
@@ -202,14 +222,14 @@ placeholder values. Agents can simply set env vars directly and skip the script.
 ### CI safety
 
 The CI workflow (`.github/workflows/ci.yml`) must explicitly assert that no
-`FERRO_PROTECT_LIVE_*` env vars are present in the runner environment before
+`UNIFI_PROTECT_*` env vars are present in the runner environment before
 running `cargo test --all`. This prevents a leaked credential in repo settings
 from accidentally hitting a real NVR during a routine PR build. Add as a bash
 step early in the job:
 
 ```bash
-if env | grep -q '^FERRO_PROTECT_LIVE_'; then
-  echo "::error::FERRO_PROTECT_LIVE_* env vars must not be set in CI" >&2
+if env | grep -q '^UNIFI_PROTECT_'; then
+  echo "::error::UNIFI_PROTECT_* env vars must not be set in CI" >&2
   exit 1
 fi
 ```
@@ -279,7 +299,7 @@ Rules:
 ├── .gitmodules                         # submodule pointer
 ├── .github/workflows/ci.yml            # CI pipeline (includes live-env guard)
 ├── .gitignore                          # includes .env, .env.local
-├── .env.example                        # template for FERRO_PROTECT_LIVE_* vars
+├── .env.example                        # template for UNIFI_PROTECT_* vars
 ├── scripts/
 │   ├── pre-commit                      # optional local hook
 │   ├── update-spec                     # one-command spec bump (phase 1)
@@ -338,7 +358,7 @@ Tasks:
 5. Add `third_party/unifi-apis` as a submodule: `git submodule add https://github.com/beezly/unifi-apis third_party/unifi-apis`. Pin to a specific commit so future updates are deliberate.
 6. Create `crates/ferro-protect/` with a minimal `Cargo.toml` (`lints.workspace = true`) and a `src/lib.rs` containing only `#![forbid(unsafe_code)]` and a doc comment. No build.rs yet.
 7. Create `crates/ferro-protect-cli/` with a minimal `Cargo.toml` (depends on `ferro-protect` via `path = "../ferro-protect"`, plus `clap` with `derive` feature, `anyhow`, `tokio` with `rt-multi-thread` + `macros`). `src/main.rs` is a stub `fn main() {}` (still with `#![forbid(unsafe_code)]`).
-8. Create `.github/workflows/ci.yml`: matrix on Linux at minimum, steps for `checkout` (with `submodules: recursive`), `rust-toolchain` install, then `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo deny check`. Cache the cargo registry and target dir. Include the `FERRO_PROTECT_LIVE_*` env guard from the testing strategy section as the first step after checkout.
+8. Create `.github/workflows/ci.yml`: matrix on Linux at minimum, steps for `checkout` (with `submodules: recursive`), `rust-toolchain` install, then `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all`, `cargo deny check`. Cache the cargo registry and target dir. Include the `UNIFI_PROTECT_*` env guard from the testing strategy section as the first step after checkout.
 9. Create `scripts/pre-commit` (executable bash): runs `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings`. Document in README how to symlink it into `.git/hooks/pre-commit`.
 10. Create `.gitignore` (target/, *.swp, .DS_Store, /PROGRESS.md.bak, `.env`, `.env.local`, etc. — but **do** track `PROGRESS.md` and `.env.example` themselves).
 11. Create a stub `README.md` (one paragraph + clone instructions including `--recurse-submodules`). The "Running tests" section is fleshed out in the chore after phase 2, but reserve a heading for it here. Also create an empty `CHANGELOG.md`.
@@ -419,18 +439,18 @@ Tasks:
 1. If phase 2 marked live tests with `#[ignore]`, remove the attribute. Live tests
    gate on env vars at the function top, not on test runner flags.
 2. Create `crates/ferro-protect/tests/common/mod.rs` with two helpers:
-   - `pub fn live_client() -> Option<ProtectClient>` — resolves `FERRO_PROTECT_LIVE_HOST`
-     and either `FERRO_PROTECT_LIVE_API_KEY_FILE` or `FERRO_PROTECT_LIVE_API_KEY`,
-     plus `FERRO_PROTECT_LIVE_INSECURE`. Returns `None` if `HOST` is missing.
+   - `pub fn live_client() -> Option<ProtectClient>` — resolves `UNIFI_PROTECT_HOST`
+     and either `UNIFI_PROTECT_API_KEY_FILE` or `UNIFI_PROTECT_API_KEY`,
+     plus `UNIFI_PROTECT_INSECURE`. Returns `None` if `HOST` is missing.
      Panics with a clear message if `HOST` is set but no key source is.
-   - `pub fn mutations_allowed() -> bool` — `true` only when `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1`.
+   - `pub fn mutations_allowed() -> bool` — `true` only when `UNIFI_PROTECT_ALLOW_MUTATIONS=1`.
 3. Rename any existing live tests to `live_read_*` (e.g., the phase-2 info test
    becomes `live_read_info`). Adopt the test prelude pattern from the testing
    strategy section.
 4. Update `scripts/live-test` to source `.env.local` and run
    `cargo test --test live -- --nocapture` (no `--ignored` flag any more).
    Document the file's bash dependency in a comment.
-5. Update `.github/workflows/ci.yml`: add the `FERRO_PROTECT_LIVE_*` guard step
+5. Update `.github/workflows/ci.yml`: add the `UNIFI_PROTECT_*` guard step
    (see testing strategy section for the bash) early in the job, before any
    `cargo test` invocation.
 6. Write a "Running tests" section in `README.md` that covers:
@@ -440,20 +460,20 @@ Tasks:
      values, then either `source .env.local && cargo test --all` or use
      `./scripts/live-test` for a one-shot.
    - **Running mutating live tests**: additionally set
-     `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1`. State plainly that this can
+     `UNIFI_PROTECT_ALLOW_MUTATIONS=1`. State plainly that this can
      change NVR state, trigger physical events (sirens, camera motion,
      doorbell chimes), and should be done deliberately, ideally against
      a non-production NVR.
    - **Env file security note**: `.env.local` is gitignored; keep the API
-     key file referenced by `FERRO_PROTECT_LIVE_API_KEY_FILE` outside the
+     key file referenced by `UNIFI_PROTECT_API_KEY_FILE` outside the
      repo or in a gitignored location. Brief mention of `chmod 600` for
      the key file.
-   - **CI behavior**: the CI runner blocks any `FERRO_PROTECT_LIVE_*` env
+   - **CI behavior**: the CI runner blocks any `UNIFI_PROTECT_*` env
      var from being set, so live tests cannot accidentally run from PR
      builds.
 7. Run fmt, clippy, test, deny. Confirm `cargo test --all` (with no
-   `FERRO_PROTECT_LIVE_*` set) passes locally and the live test reports as
-   `ok` with skip output to stdout. Then export `FERRO_PROTECT_LIVE_HOST=invalid.example`
+   `UNIFI_PROTECT_*` set) passes locally and the live test reports as
+   `ok` with skip output to stdout. Then export `UNIFI_PROTECT_HOST=invalid.example`
    without any key, and confirm the test panics with the helper's clear
    "HOST set but no key provided" message (the contract specified in step 2).
 

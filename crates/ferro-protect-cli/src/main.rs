@@ -33,8 +33,9 @@ struct Cli {
     api_key_file: Option<std::path::PathBuf>,
 
     /// Skip TLS certificate validation. Use only with NVRs whose cert you
-    /// cannot pin.
-    #[arg(long, global = true)]
+    /// cannot pin. Honours `UNIFI_PROTECT_INSECURE=1` from the env so a
+    /// single sourced `.env.local` drives both the CLI and the live tests.
+    #[arg(long, global = true, env = "UNIFI_PROTECT_INSECURE")]
     insecure: bool,
 
     /// Emit JSON instead of human-formatted output.

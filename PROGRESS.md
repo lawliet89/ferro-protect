@@ -235,3 +235,94 @@ All four gates green: 4 ferro-protect tests + 2 ferro-protect-cli tests
 
 **Next**: Phase 3 -- smart API key loader (remove `--api-key`, add
 file + env-var sources with strict precedence, dedicated tests).
+
+## 2026-05-17 12:30 +0800 — Phase 3: smart API key resolver
+
+**Status**: complete
+
+**Summary**:
+The CLI now resolves the API key from three sources with strict
+precedence -- `--api-key-file <PATH>` flag, `UNIFI_PROTECT_API_KEY_FILE`
+env, `UNIFI_PROTECT_API_KEY` env -- via `crates/ferro-protect-cli/src/api_key.rs`.
+The phase-2 hidden `--api-key` scaffold is gone. To make the resolver
+unit-testable the CLI crate grew a `[lib]` target alongside its bin so
+integration tests can `use ferro_protect_cli::api_key::*`. 12 dedicated
+tests cover every precedence path, file edge cases (empty, whitespace-only,
+nonexistent, trimmed), the `NotProvided` error message format, the Unix
+file-permission warning path, and a binary-level `assert_cmd` smoke test.
+
+**Files added/changed**:
+- `crates/ferro-protect-cli/src/{lib,api_key}.rs` (new)
+- `crates/ferro-protect-cli/src/main.rs` (rewritten to use the resolver;
+  stderr lock scoped in a sync block so the future stays `Send`)
+- `crates/ferro-protect-cli/Cargo.toml` (`[lib]` target; thiserror dep;
+  tempfile dev-dep)
+- `crates/ferro-protect-cli/tests/api_key.rs` (new, 12 tests)
+- `crates/ferro-protect-cli/tests/info.rs` (key now passed via
+  `UNIFI_PROTECT_API_KEY` env since the `--api-key` flag is gone)
+- `Cargo.toml` (`tempfile = "3"` workspace dep)
+- `README.md` ("How to run live tests" section -- when, how, ad-hoc CLI
+  invocation, env-var table)
+
+**Decisions / deviations**:
+- The resolver takes an `env: impl Fn(&str) -> Option<String>` callback
+  instead of reading `std::env::*` directly. Tests pass their own
+  closure; production passes `|k| std::env::var(k).ok()`. This avoids
+  the usual env-mutation serialisation tax and lets tests run in
+  parallel.
+- Warnings (e.g. lax key-file permissions) are written through a
+  `&mut impl io::Write` parameter rather than `eprintln!`. Production
+  passes `io::stderr().lock()`; tests pass `Vec<u8>` and assert on
+  contents.
+- The `--api-key-file` clap flag deliberately does **not** declare
+  `env = "UNIFI_PROTECT_API_KEY_FILE"`. That env lookup is owned by
+  `api_key::resolve` so the documented three-source precedence runs
+  through one code path (clap's env-magic would otherwise short-circuit
+  the manual precedence logic).
+- Added a doc clarifying that `UNIFI_PROTECT_HOST` expects hostname only
+  (no scheme) after almost-tripping over `https://https://...` -- pinned
+  in both `.env.example` and the README env-var table.
+- Live-test scaffold env vars renamed from `FERRO_PROTECT_LIVE_*` to
+  `UNIFI_PROTECT_*` in a follow-up chore (see below).
+
+**Next**: Phase 4 -- read endpoints for all 7 entities.
+
+## 2026-05-17 12:40 +0800 — Chore: unify live-test env vars under `UNIFI_PROTECT_*`
+
+**Status**: complete
+
+**Summary**:
+Reverses the earlier "distinct `FERRO_PROTECT_LIVE_*` prefix" decision
+recorded in the phase 2 entry above. Live tests now read the same
+`UNIFI_PROTECT_HOST` / `UNIFI_PROTECT_API_KEY_FILE` / `UNIFI_PROTECT_API_KEY`
+/ `UNIFI_PROTECT_INSECURE` / `UNIFI_PROTECT_ALLOW_MUTATIONS` env vars as the
+CLI. The CLI's `--insecure` flag picked up `env = "UNIFI_PROTECT_INSECURE"`
+in the same change so it honours the new env var too.
+
+**Files added/changed**:
+- `crates/ferro-protect/tests/common/mod.rs` (env-var consts renamed)
+- `crates/ferro-protect/tests/live.rs` (doc comment updated)
+- `crates/ferro-protect-cli/src/main.rs` (`--insecure` gains `env =`)
+- `.env.example`, `scripts/live-test`, `README.md`, `ARCHITECTURE.md`,
+  `PLAN.md`, `.github/workflows/ci.yml` (all references swept)
+
+**Decisions / deviations**:
+- This is a purely *ergonomic* decision, **not a security or
+  architectural one**. The original design's belt-and-braces safeguard
+  (distinct prefixes so a developer's normal shell couldn't silently
+  activate live tests via `cargo test`) was good intent but expensive in
+  practice -- two parallel env-var sets to maintain. The unified prefix
+  means one `.env.local`, one `source`, both the live test suite and
+  ad-hoc `cargo run -- info` invocations work.
+- Residual risk is small: read-only live tests are harmless, write-side
+  tests still gate separately on `UNIFI_PROTECT_ALLOW_MUTATIONS`, and
+  the CI guard renamed to forbid `UNIFI_PROTECT_*` in the runner
+  (previously `FERRO_PROTECT_LIVE_*`).
+- PLAN.md's "Testing strategy" section now leads with the ergonomic
+  rationale so the *why* is preserved in canonical docs and a future
+  reader doesn't propose flipping it back.
+- The phase 2 PROGRESS entry above still documents the original
+  rationale verbatim; deliberately not edited, since it's a historical
+  record of the decision at that time.
+
+**Next**: Phase 4 -- read endpoints for all 7 entities.

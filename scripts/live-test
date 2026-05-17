@@ -2,11 +2,11 @@
 # Run the ferro-protect live integration tests against your NVR.
 #
 # Sources .env.local (gitignored) if present, then runs `cargo test --test
-# live -- --nocapture`. Live tests now auto-skip when the FERRO_PROTECT_LIVE_*
-# env vars are absent, so this script just plumbs your local config and
+# live -- --nocapture`. Live tests auto-skip when the UNIFI_PROTECT_* env
+# vars are absent, so this script just plumbs your local config and
 # forwards arguments.
 #
-# Mutating tests are gated separately by FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1.
+# Mutating tests are gated separately by UNIFI_PROTECT_ALLOW_MUTATIONS=1.
 # See crates/ferro-protect/tests/common/mod.rs and PLAN.md "Testing strategy".
 #
 # Requires: bash (uses `set -a` / `source`).
@@ -23,8 +23,8 @@ if [[ -f .env.local ]]; then
   set +a
 fi
 
-if [[ -z "${FERRO_PROTECT_LIVE_HOST:-}" ]]; then
-  echo "error: FERRO_PROTECT_LIVE_HOST is unset." >&2
+if [[ -z "${UNIFI_PROTECT_HOST:-}" ]]; then
+  echo "error: UNIFI_PROTECT_HOST is unset." >&2
   echo "  Copy .env.example to .env.local and fill it in." >&2
   exit 1
 fi

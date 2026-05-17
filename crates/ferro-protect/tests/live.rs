@@ -2,7 +2,7 @@
 #![allow(clippy::pedantic, clippy::nursery)]
 
 //! Live integration tests. Run as part of the normal `cargo test --all`
-//! suite -- when `FERRO_PROTECT_LIVE_HOST` is unset they early-return and
+//! suite -- when `UNIFI_PROTECT_HOST` is unset they early-return and
 //! count as `ok`. Configure the live environment via `.env.local` (see
 //! `.env.example` for the full var list) and run them with:
 //!
@@ -12,16 +12,18 @@
 //! source .env.local && cargo test --all
 //! ```
 //!
-//! Mutating tests (`live_write_*`) additionally require
-//! `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1`. See PLAN.md "Testing strategy"
-//! for the contract.
+//! The env vars (`UNIFI_PROTECT_HOST`, `UNIFI_PROTECT_API_KEY_FILE` etc.)
+//! are shared with the CLI, so a single `.env.local` drives both. Mutating
+//! tests (`live_write_*`) additionally require
+//! `UNIFI_PROTECT_ALLOW_MUTATIONS=1`. See PLAN.md "Testing strategy" for
+//! the contract.
 
 mod common;
 
 #[tokio::test]
 async fn live_read_info() {
     let Some(client) = common::live_client() else {
-        println!("(skipping live_read_info: FERRO_PROTECT_LIVE_HOST not set)");
+        println!("(skipping live_read_info: UNIFI_PROTECT_HOST not set)");
         return;
     };
     let info = client

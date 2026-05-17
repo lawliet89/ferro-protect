@@ -59,7 +59,7 @@ cargo test --all
 Runs everything: unit tests, mocked integration tests (against an in-process
 `wiremock` server), snapshot tests, doc tests, and live tests. Live tests
 **auto-skip** when no NVR is configured -- they check for
-`FERRO_PROTECT_LIVE_HOST` at the top of the function and early-return as `ok`
+`UNIFI_PROTECT_HOST` at the top of the function and early-return as `ok`
 when absent. So this command is safe and useful on any machine, NVR or not.
 
 ### How to run live tests
@@ -68,7 +68,7 @@ One-time setup:
 
 ```sh
 cp .env.example .env.local
-$EDITOR .env.local          # fill in FERRO_PROTECT_LIVE_HOST + key path
+$EDITOR .env.local          # fill in UNIFI_PROTECT_HOST + key path
 chmod 600 <your api key file>
 ```
 
@@ -94,23 +94,23 @@ subcommand without going through the test harness):
 ```sh
 set -a; source .env.local; set +a
 cargo run -p ferro-protect-cli -- \
-  --host "$FERRO_PROTECT_LIVE_HOST" \
-  --api-key-file "$FERRO_PROTECT_LIVE_API_KEY_FILE" \
-  ${FERRO_PROTECT_LIVE_INSECURE:+--insecure} \
+  --host "$UNIFI_PROTECT_HOST" \
+  --api-key-file "$UNIFI_PROTECT_API_KEY_FILE" \
+  ${UNIFI_PROTECT_INSECURE:+--insecure} \
   info
 ```
 
 #### Environment variables
 
-All prefixed `FERRO_PROTECT_LIVE_` to make accidental activation impossible:
+All prefixed `UNIFI_PROTECT_` to make accidental activation impossible:
 
 | Var | Purpose |
 |---|---|
-| `FERRO_PROTECT_LIVE_HOST` | NVR hostname or `host:port` -- **no scheme prefix**. The client always wraps this as `https://{host}/proxy/protect/integration`. **Required.** Absence means all live tests skip. |
-| `FERRO_PROTECT_LIVE_API_KEY_FILE` | Path to a file containing the API key. **Preferred over the raw env var below.** |
-| `FERRO_PROTECT_LIVE_API_KEY` | Raw API key. Use only if the file form is impractical. |
-| `FERRO_PROTECT_LIVE_INSECURE` | Set to a non-empty value to accept self-signed TLS (common on home NVRs). |
-| `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS` | Set to `1` to also run `live_write_*` tests. See below. |
+| `UNIFI_PROTECT_HOST` | NVR hostname or `host:port` -- **no scheme prefix**. The client always wraps this as `https://{host}/proxy/protect/integration`. **Required.** Absence means all live tests skip. |
+| `UNIFI_PROTECT_API_KEY_FILE` | Path to a file containing the API key. **Preferred over the raw env var below.** |
+| `UNIFI_PROTECT_API_KEY` | Raw API key. Use only if the file form is impractical. |
+| `UNIFI_PROTECT_INSECURE` | Set to a non-empty value to accept self-signed TLS (common on home NVRs). |
+| `UNIFI_PROTECT_ALLOW_MUTATIONS` | Set to `1` to also run `live_write_*` tests. See below. |
 
 If `HOST` is set but no key source is, the test helper panics with a
 clear message instead of silently skipping -- a half-configured live env
@@ -137,7 +137,7 @@ Tests named `live_write_*` change NVR state: PATCH configuration, trigger
 alarms, upload files, etc. They are gated behind a second env var:
 
 ```sh
-FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1 ./scripts/live-test
+UNIFI_PROTECT_ALLOW_MUTATIONS=1 ./scripts/live-test
 ```
 
 Run these **deliberately, ideally against a non-production NVR.** They can
@@ -147,9 +147,9 @@ recording modes, or modify saved settings.
 ### Security notes
 
 - `.env`, `.env.local` are gitignored. Do not check them in.
-- Prefer `FERRO_PROTECT_LIVE_API_KEY_FILE` over the raw env var, and keep the
+- Prefer `UNIFI_PROTECT_API_KEY_FILE` over the raw env var, and keep the
   key file outside the repo (e.g. `~/.config/ferro-protect/api_key`).
 - Restrict the key file's permissions: `chmod 600 <path>`.
-- The CI workflow fails fast if any `FERRO_PROTECT_LIVE_*` env var is present
+- The CI workflow fails fast if any `UNIFI_PROTECT_*` env var is present
   in the runner environment, so a leaked secret cannot accidentally hit a real
   NVR from a PR build.
