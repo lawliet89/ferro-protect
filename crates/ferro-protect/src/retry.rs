@@ -17,6 +17,13 @@
 //! - **Network / connect / read timeout errors** -> retry the same way.
 //! - All other outcomes return without retrying.
 //!
+//! Only the **delta-seconds** form of `Retry-After` (e.g. `Retry-After:
+//! 5`) is honoured. RFC 9110 also permits an HTTP-date form
+//! (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`); UniFi Protect does
+//! not send that form, so parsing it is not worth a dependency on
+//! `httpdate`. If a date-form value is encountered, the middleware
+//! falls back to its own exponential backoff.
+//!
 //! Attempts are bounded by `max_retries`. Once exhausted, the last
 //! response (or error) is surfaced unchanged so the caller sees the
 //! real status code rather than a generic "retries exhausted" wrapper.
@@ -58,6 +65,14 @@ impl Middleware for RetryAfterAwareMiddleware {
             let Some(delay) = self.decide_retry(&result, attempt) else {
                 return result;
             };
+
+            // Drain the response body before sleeping so the underlying
+            // connection is returned to reqwest's pool rather than left
+            // half-read until drop. Without this, retries cost a fresh
+            // TCP+TLS handshake every time under load.
+            if let Ok(response) = result {
+                let _ = response.bytes().await;
+            }
 
             attempt += 1;
             debug!(

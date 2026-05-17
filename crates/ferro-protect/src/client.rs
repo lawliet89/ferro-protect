@@ -396,7 +396,11 @@ impl ProtectClientBuilder {
                 cfg.initial_capacity,
                 cfg.window.as_millis()
             ),
-            (Some(_), false) => "default (10/1000ms)".to_string(),
+            (Some(cfg), false) => format!(
+                "default ({}/{}ms)",
+                cfg.initial_capacity,
+                cfg.window.as_millis()
+            ),
             (None, _) => "disabled".to_string(),
         };
 

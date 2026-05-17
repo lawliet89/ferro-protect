@@ -98,6 +98,10 @@ async fn retry_budget_exhausts_and_surfaces_429() {
         .await;
 
     // Tight retry: 1 attempt + 1 retry, tiny backoff so the test is fast.
+    // The default proactive throttle stays on -- two requests in <1s sit
+    // well under the 10/sec default budget, so it does not affect the
+    // assertions here. (Per `docs/TASK_rate_limit.md`, tests exercise
+    // default-on behaviour.)
     let client = ProtectClient::builder()
         .base_url(server.uri())
         .api_key(SecretString::from("test-key".to_string()))
@@ -106,8 +110,6 @@ async fn retry_budget_exhausts_and_surfaces_429() {
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(20),
         })
-        // Disable the proactive throttle so this test isn't gated by it.
-        .rate_limit(None)
         .build()
         .expect("client builds");
 

@@ -23,10 +23,10 @@ proactively. This is much richer than the typical `Retry-After`-only
 contract — we can throttle *before* tripping 429, not just back off
 after.
 
-(Whether the NVR also returns `Retry-After` on a 429 response itself
-has not yet been observed; the empirical pass succeeded. Step 2 must
-capture a real 429 response and record its headers so this plan can
-pick the right backoff source.)
+A follow-up burst (15 concurrent GETs) captured a real 429 response.
+It carries the same `RateLimit` headers as a 200 plus a `Retry-After: 1`
+header (delta-seconds form). So the server's retry hint is reliable
+and can drive the reactive layer directly.
 
 ## Timing
 
@@ -105,13 +105,15 @@ the moment we add more parallel callers (phase 5+).
 Read each crate's README and pick from this shortlist; do not invent
 others.
 
-- **`reqwest-middleware` + `reqwest-retry`** — the established choice.
-  Wraps `reqwest::Client` as a `ClientWithMiddleware`; ships a
-  `RetryTransientMiddleware` that already understands `Retry-After`
-  and exposes an `ExponentialBackoff` policy. Cost: every helper in
-  [`client.rs`](../crates/ferro-protect/src/client.rs) calls
-  `self.http.get(...)` etc., and those calls switch to the middleware
-  type. The change is mechanical but surface-area-wide.
+- **`reqwest-middleware` + `reqwest-retry`** — the established choice
+  on paper. Wraps `reqwest::Client` as a `ClientWithMiddleware` and
+  ships a `RetryTransientMiddleware`. **Verified during implementation
+  that it does not honour `Retry-After`** — the built-in
+  `RetryTransientMiddleware` uses its own `ExponentialBackoff` policy
+  and ignores the header. That defeats the main reason to take the
+  dep, so we kept `reqwest-middleware` for the middleware plumbing
+  but wrote a custom retry middleware ([`src/retry.rs`](../crates/ferro-protect/src/retry.rs))
+  instead of using `reqwest-retry`.
 
 - **`backon`** — lightweight async backoff combinators (`Retryable`
   trait wrapping any async closure). No middleware layer; wrap each

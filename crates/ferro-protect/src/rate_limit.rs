@@ -32,7 +32,11 @@ use tokio::sync::Semaphore;
 /// firmware raises the quota.
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
-    /// Maximum concurrent in-flight requests within `window`.
+    /// Maximum number of requests that may *start* within any rolling
+    /// `window`. This is a per-window quota, not a concurrency cap --
+    /// permits are released on a timer (see [`AdaptiveLimiter::acquire`])
+    /// independent of when the request actually completes, matching the
+    /// server's leaky-bucket semantics.
     pub initial_capacity: u32,
     /// Window over which `initial_capacity` requests are allowed.
     pub window: Duration,
@@ -85,6 +89,11 @@ impl AdaptiveLimiter {
             .await
             .expect("rate-limit semaphore is never closed");
         let window = Duration::from_millis(self.inner.window_millis.load(Ordering::Acquire));
+        // One short-lived release task per acquired permit. At Protect's
+        // 10/sec budget this is at most ~10 tasks/sec of overhead and
+        // matches the sliding-window semantics naturally. A shared
+        // refill loop would be lower overhead at very high RPS but the
+        // server's quota is the upper bound — we're not in that regime.
         tokio::spawn(async move {
             tokio::time::sleep(window).await;
             drop(permit);
