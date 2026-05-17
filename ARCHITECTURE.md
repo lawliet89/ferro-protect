@@ -321,7 +321,7 @@ Three layers, all driven by `cargo test --all`. None are `#[ignore]`d.
 transformations. None are currently active — the spec rewrite snapshot
 was retired when typify replaced progenitor (the rewrite layer shrank
 so much it no longer warrants a snapshot, and
-`tests/model_codegen.rs` covers the seam). Phase 10 will add snapshots
+`tests/model_codegen.rs` covers the seam). Phase 11 will add snapshots
 for the CLI `--help` text and canonical error messages; the `insta` +
 `similar` `[profile.dev.package]` overrides in the workspace
 [Cargo.toml](Cargo.toml) stay in place for that future use. Snapshots
@@ -368,7 +368,8 @@ code surprises you and you suspect there is a non-obvious reason.
 
 ## Status
 
-Pre-0.1.0. The library currently supports one endpoint (`GET /v1/meta/info`).
-Phases 3 through 9 deliver the remaining 34 operations, the WebSocket
-subscribers, and the binary-payload endpoints. Phase 10 polishes for
-release. See [PLAN.md](PLAN.md) for the full roadmap.
+Pre-0.1.0. Phases 3–10 deliver the remaining operations across reads
+(entity reads in 4, binary endpoints in 5, files-list in 6, WebSocket
+subscribers in 7) and mutations (CRUD in 8, actions in 9, files-upload
+in 10). Phase 11 polishes for release. See [PLAN.md](PLAN.md) for the
+full roadmap.
