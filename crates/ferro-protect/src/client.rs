@@ -14,7 +14,7 @@ use url::Url;
 use crate::auth::{ApiKey, API_KEY_HEADER};
 use crate::error::{Error, Result};
 use crate::models::ApplicationInfo;
-use crate::rate_limit::{AdaptiveLimiter, RateLimitConfig};
+use crate::rate_limit::{AdaptiveLimiter, RateLimitConfig, RateLimitMiddleware};
 use crate::retry::RetryAfterAwareMiddleware;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -92,7 +92,6 @@ pub struct ProtectClient {
     /// writes surface immediately rather than getting silently re-applied.
     http_write: ClientWithMiddleware,
     base_url: Url,
-    limiter: Option<AdaptiveLimiter>,
 }
 
 impl ProtectClient {
@@ -119,9 +118,7 @@ impl ProtectClient {
 
     pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         debug!("GET {path}");
-        self.acquire().await;
         let response = self.http_read.get(self.url(path)?).send().await?;
-        self.observe(response.headers());
         Self::json_response(response).await
     }
 
@@ -137,14 +134,12 @@ impl ProtectClient {
         body: &B,
     ) -> Result<T> {
         debug!("POST {path}");
-        self.acquire().await;
         let response = self
             .http_write
             .post(self.url(path)?)
             .json(body)
             .send()
             .await?;
-        self.observe(response.headers());
         Self::json_response(response).await
     }
 
@@ -155,14 +150,12 @@ impl ProtectClient {
         body: &B,
     ) -> Result<T> {
         debug!("PATCH {path}");
-        self.acquire().await;
         let response = self
             .http_write
             .patch(self.url(path)?)
             .json(body)
             .send()
             .await?;
-        self.observe(response.headers());
         Self::json_response(response).await
     }
 
@@ -174,13 +167,11 @@ impl ProtectClient {
     #[allow(dead_code)]
     pub(crate) async fn send_no_content(&self, method: reqwest::Method, path: &str) -> Result<()> {
         debug!("{method} {path}");
-        self.acquire().await;
         let response = self
             .http_write
             .request(method, self.url(path)?)
             .send()
             .await?;
-        self.observe(response.headers());
         if response.status().is_success() {
             return Ok(());
         }
@@ -190,25 +181,11 @@ impl ProtectClient {
     #[allow(dead_code)]
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
-        self.acquire().await;
         let response = self.http_read.get(self.url(path)?).send().await?;
-        self.observe(response.headers());
         if response.status().is_success() {
             return Ok(response.bytes().await?);
         }
         Err(Error::from_response(response).await)
-    }
-
-    async fn acquire(&self) {
-        if let Some(limiter) = &self.limiter {
-            limiter.acquire().await;
-        }
-    }
-
-    fn observe(&self, headers: &HeaderMap) {
-        if let Some(limiter) = &self.limiter {
-            limiter.observe(headers);
-        }
     }
 
     fn url(&self, path: &str) -> Result<Url> {
@@ -365,18 +342,6 @@ impl ProtectClientBuilder {
             max_backoff: self.retry.max_backoff,
         };
 
-        let http_read = MiddlewareClientBuilder::new(reqwest_client.clone())
-            .with(retry_middleware.clone())
-            .build();
-
-        let http_write = if self.retry_on_mutations {
-            MiddlewareClientBuilder::new(reqwest_client)
-                .with(retry_middleware)
-                .build()
-        } else {
-            MiddlewareClientBuilder::new(reqwest_client).build()
-        };
-
         // Rate-limit semantics: `Option<RateLimitConfig>` means
         // `Some(custom)` / `None` (explicitly disabled) when the user
         // called `.rate_limit(...)`. If they did not call it at all, we
@@ -388,7 +353,33 @@ impl ProtectClientBuilder {
         } else {
             Some(RateLimitConfig::default())
         };
-        let limiter = effective_rate_limit.as_ref().map(AdaptiveLimiter::new);
+        // Build one `AdaptiveLimiter` (shared semaphore) used by both
+        // http_read and http_write middleware stacks.
+        let opt_limiter = effective_rate_limit.as_ref().map(AdaptiveLimiter::new);
+
+        // `RateLimitMiddleware` is stacked *inside* (after) the retry
+        // middleware so every retry attempt acquires a fresh permit.
+        // This ensures retries are counted against the server budget
+        // rather than bypassing the limiter's per-window quota.
+        let http_read = {
+            let mut builder = MiddlewareClientBuilder::new(reqwest_client.clone())
+                .with(retry_middleware.clone());
+            if let Some(ref limiter) = opt_limiter {
+                builder = builder.with(RateLimitMiddleware { limiter: limiter.clone() });
+            }
+            builder.build()
+        };
+
+        let http_write = {
+            let mut builder = MiddlewareClientBuilder::new(reqwest_client);
+            if self.retry_on_mutations {
+                builder = builder.with(retry_middleware);
+            }
+            if let Some(limiter) = opt_limiter {
+                builder = builder.with(RateLimitMiddleware { limiter });
+            }
+            builder.build()
+        };
 
         let rate_limit_label = match (&effective_rate_limit, self.rate_limit_overridden) {
             (Some(cfg), true) => format!(
@@ -418,7 +409,6 @@ impl ProtectClientBuilder {
             http_read,
             http_write,
             base_url,
-            limiter,
         })
     }
 }

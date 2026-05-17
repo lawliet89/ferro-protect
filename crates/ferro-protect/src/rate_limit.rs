@@ -21,8 +21,12 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use http::Extensions;
 use log::{debug, info, warn};
 use reqwest::header::HeaderMap;
+use reqwest::{Request, Response};
+use reqwest_middleware::{Middleware, Next};
 use tokio::sync::Semaphore;
 
 /// Public knobs for the proactive rate limiter.
@@ -103,6 +107,13 @@ impl AdaptiveLimiter {
     /// Parse RFC 9331 `RateLimit-Policy` from a response and grow the
     /// budget if the server now advertises a larger quota. No-op when
     /// headers are absent or unparseable.
+    ///
+    /// **Window-change caveat:** if the server changes its window duration
+    /// (`w`), any permits that were already acquired will still be released
+    /// after the old window duration. The new window only takes effect for
+    /// permits acquired *after* this call. In the short-term this can cause
+    /// a slight deviation from the new policy window, but in practice
+    /// Protect never changes its window mid-session.
     pub(crate) fn observe(&self, headers: &HeaderMap) {
         let Some(policy) = parse_ratelimit_policy(headers) else {
             return;
@@ -135,6 +146,39 @@ impl AdaptiveLimiter {
                 policy.quota, new_window_millis,
             );
         }
+    }
+}
+
+/// `reqwest-middleware` layer that enforces the proactive rate limit.
+///
+/// Stacked *inside* [`RetryAfterAwareMiddleware`](crate::retry::RetryAfterAwareMiddleware)
+/// so that every retry attempt — not just the first — must acquire a slot
+/// before the request is sent. This prevents a burst of transient failures
+/// from consuming more of the server's quota than the sliding-window budget
+/// allows.
+///
+/// After each attempt the response headers are fed to
+/// [`AdaptiveLimiter::observe`] so the limiter can grow its capacity if
+/// the server advertises a larger quota.
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) struct RateLimitMiddleware {
+    pub(crate) limiter: AdaptiveLimiter,
+}
+
+#[async_trait]
+impl Middleware for RateLimitMiddleware {
+    async fn handle(
+        &self,
+        req: Request,
+        extensions: &mut Extensions,
+        next: Next<'_>,
+    ) -> reqwest_middleware::Result<Response> {
+        self.limiter.acquire().await;
+        let response = next.run(req, extensions).await;
+        if let Ok(ref resp) = response {
+            self.limiter.observe(resp.headers());
+        }
+        response
     }
 }
 

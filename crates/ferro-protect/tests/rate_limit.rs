@@ -35,10 +35,10 @@ async fn retries_429_then_succeeds_honouring_retry_after() {
     let server = MockServer::start().await;
 
     // Counting responder: first call -> 429 + Retry-After: 1; subsequent -> 200.
-    struct FirstThen429 {
+    struct First429ThenOk {
         calls: Arc<AtomicUsize>,
     }
-    impl Respond for FirstThen429 {
+    impl Respond for First429ThenOk {
         fn respond(&self, _: &Request) -> ResponseTemplate {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
@@ -61,7 +61,7 @@ async fn retries_429_then_succeeds_honouring_retry_after() {
     let calls = Arc::new(AtomicUsize::new(0));
     Mock::given(method("GET"))
         .and(path("/v1/meta/info"))
-        .respond_with(FirstThen429 {
+        .respond_with(First429ThenOk {
             calls: Arc::clone(&calls),
         })
         .expect(2)
