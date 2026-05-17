@@ -84,3 +84,47 @@ async fn live_read_cameras_get() {
     );
     assert_eq!(fetched.id, first.id, "list+get should agree on id");
 }
+
+#[tokio::test]
+async fn live_read_chimes_list() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_chimes_list: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let chimes = client
+        .chimes()
+        .list()
+        .await
+        .expect("chimes list call succeeded");
+    println!("live_read_chimes_list: {} chime(s) returned", chimes.len());
+    for c in &chimes {
+        println!("  - {} {} state={}", c.id, c.name, c.state);
+    }
+}
+
+#[tokio::test]
+async fn live_read_chimes_get() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_chimes_get: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let chimes = client
+        .chimes()
+        .list()
+        .await
+        .expect("chimes list call succeeded");
+    let Some(first) = chimes.first() else {
+        println!("(skipping live_read_chimes_get: NVR has no chimes)");
+        return;
+    };
+    let fetched = client
+        .chimes()
+        .get(&first.id)
+        .await
+        .expect("chimes get call succeeded");
+    println!(
+        "live_read_chimes_get: round-tripped {} ({})",
+        fetched.id, fetched.name
+    );
+    assert_eq!(fetched.id, first.id, "list+get should agree on id");
+}

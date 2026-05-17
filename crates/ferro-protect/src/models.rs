@@ -12,5 +12,5 @@
 //! **Do not** name `crate::generated::...` types in any public signature.
 
 pub use crate::generated::types::{
-    Camera, CameraId, GetMetaInfoResponse as ApplicationInfo, ProtectVersion,
+    Camera, CameraId, Chime, ChimeId, GetMetaInfoResponse as ApplicationInfo, ProtectVersion,
 };

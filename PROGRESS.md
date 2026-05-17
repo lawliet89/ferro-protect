@@ -285,7 +285,7 @@ file-permission warning path, and a binary-level `assert_cmd` smoke test.
 - Live-test scaffold env vars renamed from `FERRO_PROTECT_LIVE_*` to
   `UNIFI_PROTECT_*` in a follow-up chore (see below).
 
-**Next**: Phase 4 -- read endpoints for all 7 entities.
+**Next**: Phase 4 -- read endpoints for all 7 entities (and the followup spec-rewriter chore documented below).
 
 ## 2026-05-17 12:40 +0800 — Chore: unify live-test env vars under `UNIFI_PROTECT_*`
 
@@ -325,4 +325,54 @@ in the same change so it honours the new env var too.
   rationale verbatim; deliberately not edited, since it's a historical
   record of the decision at that time.
 
-**Next**: Phase 4 -- read endpoints for all 7 entities.
+**Next**: Phase 4 -- read endpoints for all 7 entities (and the followup spec-rewriter chore documented below).
+
+## 2026-05-17 12:55 +0800 — Chore: harden spec rewriter (7.1.60 attempt findings)
+
+**Status**: complete (rewriter hardened); follow-up open (full 7.1.60 bump deferred)
+
+**Summary**:
+Ran `./scripts/update-spec 7.1.60` end-to-end against a real NVR running
+7.1.60. Discovered three new failure modes and added rewriter rules for
+all three; verified each is a no-op on the current 6.2.83 pin (the
+snapshot test stayed byte-identical). Spec remained at 6.2.83 -- a full
+7.1.60 bump exposes a much bigger problem (typify generates ~296 Rust
+compile errors from the deeper schemas in 7.1.x: recursive types without
+indirection, duplicate trait impls, etc.). That is beyond a rewriter
+fix and is queued as a separate work item; the current `live_read_info`
+test confirms a 6.2.83-built client talks happily to a 7.1.60 NVR for
+the endpoints we care about today.
+
+**Files added/changed**:
+- `crates/ferro-protect/build_support/spec_rewrite.rs` (three new
+  rewrites: inject placeholder `description` on Response objects that
+  lack one; drop `enum` constraint when string values would collide
+  after typify's identifier sanitisation; smarter `default` handling
+  that drops it when an explicit 4xx/5xx code exists rather than
+  blindly renaming to `4XX`).
+
+**Decisions / deviations**:
+- The "drop colliding enum" rule loses compile-time exhaustiveness for
+  the affected field (becomes a plain `String`), but the field still
+  round-trips. Acceptable for an integration field like `wiredPins`
+  whose set is hardware-dependent anyway.
+- The "drop default when explicit error code exists" rule loses the
+  typed error body for those operations. `Error::from_progenitor` falls
+  back to a serde_json::Value probe so error messages still surface;
+  we just don't get a typed Rust struct for them.
+- Did not attempt fallback (b) (openapi-generator-cli rust-async) or
+  (c) (hand-rolled types) from PLAN.md phase 1's escape hatches -- the
+  typify failures aren't well-localised, and switching generators is
+  its own multi-day project. Sticking with progenitor + 6.2.83 keeps
+  phase 4 moving.
+
+**Next**: Phase 4 -- cameras as entity #1, then six more entity pairs,
+then a final phase 4 summary entry.
+
+## 2026-05-17 13:25 +0800 — Phase 4 in progress: cameras + chimes landed
+
+(Phase 4 lands in seven commits, one per entity pair, with a final
+summary entry after `viewers`. Cameras (b583f79) introduced the
+per-entity wrapper pattern, the `commands/` module, and the shared
+`output.rs` for the JSON-vs-human-table dispatch; chimes follows the
+same template.)

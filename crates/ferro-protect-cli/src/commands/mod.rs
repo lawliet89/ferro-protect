@@ -2,3 +2,4 @@
 //! the CLI parser uses and the dispatcher that runs it.
 
 pub mod cameras;
+pub mod chimes;
