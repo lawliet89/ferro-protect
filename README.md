@@ -19,9 +19,10 @@ reading order before you open any source file.
 The maintainer's personal UniFi Protect setup does not include every
 device type Protect supports. For device categories the maintainer
 cannot observe directly, the implementation is built purely from the
-OpenAPI spec and exercised only by mocked integration tests; the live
-test suite skips the corresponding `live_read_*` checks gracefully
-when the NVR has none of that device type.
+OpenAPI spec and exercised only by mocked integration tests; in the
+live test suite, the corresponding `*_list` checks still run and
+return an empty list, while `*_get` checks skip gracefully when the
+NVR has none of that device type.
 
 In practice this means the *shape* of every endpoint is verified
 (URL routing, error mapping, JSON deserialisation against the spec),
