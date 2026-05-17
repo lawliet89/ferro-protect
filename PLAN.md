@@ -98,15 +98,15 @@ not by hand-editing wrapper modules. To make that real:
    `ferro-protect/{ver}.json`; the actual folder in the submodule is `unifi-protect/` —
    use that.)
 2. **Generated types are accessed only through `models`.** Hand-written code never
-   names `crate::generated::types::Foo` directly. Instead `crates/ferro-protect/src/models.rs`
+   names `crate::generated::Foo` directly. Instead `crates/ferro-protect/src/models.rs`
    re-exports the types we expose, optionally with renames. If codegen renames a
    type, the only fix needed is in `models.rs`. Public signatures throughout the
    library refer to `crate::models::Foo`, never `crate::generated::...`.
-3. **Wrappers delegate, they do not re-implement.** Every wrapper method
-   (`client.cameras().list()`, etc.) is a thin shim that calls the corresponding
-   generated client method, translates errors via `From` impls, and returns
-   `models::Foo`. No request bodies are constructed by hand when a generated
-   builder exists.
+3. **Wrapper methods stay mechanical.** Wrappers are the HTTP implementation,
+   but each method should be a one-liner around the shared HTTP helpers
+   (`get_json`, `post_json`, `patch_json`, etc.) and return `models::Foo`.
+   Never construct request URLs or bodies inline in business logic -- keep that
+   mechanical layer in the helpers so future endpoints stay uniform.
 4. **PATCH bodies use generated types where the spec defines them.** Where the spec
    only exposes a free-form schema (rare on Protect), define a hand-written builder
    with `#[serde(skip_serializing_if = "Option::is_none")]`, and add a comment
@@ -340,7 +340,7 @@ Rules:
 ├── crates/
 │   ├── ferro-protect/                  # library
 │   │   ├── Cargo.toml
-│   │   ├── build.rs                    # progenitor codegen
+│   │   ├── build.rs                    # typify model codegen
 │   │   ├── build_support/              # shared between build.rs and tests
 │   │   │   └── spec_rewrite.rs
 │   │   ├── src/
@@ -405,12 +405,12 @@ Tasks:
 
 Tasks:
 
-1. Add `progenitor` (latest) and `serde_json`, `syn`, `prettyplease` to `crates/ferro-protect/Cargo.toml` under `[build-dependencies]`. Add `progenitor-client`, `reqwest` (with `json`, `stream`, `rustls-tls`), `bytes`, `chrono` (with `serde` feature), `futures-core` to `[dependencies]`.
+1. Add `typify` (latest), `serde_json`, `syn`, `prettyplease`, and whatever JSON Schema parsing support typify requires to `crates/ferro-protect/Cargo.toml` under `[build-dependencies]`. Add `reqwest` (with `json`, `stream`, `rustls-tls`), `bytes`, `chrono` (with `serde` feature), `futures-core`, and `url` to `[dependencies]`.
 2. Create `crates/ferro-protect/build.rs`. Hardcode a constant `const SPEC_VERSION: &str = "6.2.83";`. The spec path is derived as `third_party/unifi-apis/unifi-protect/{SPEC_VERSION}.json` (note: the submodule's folder is `unifi-protect/`, not `ferro-protect/`). The build script:
    - Prints `cargo:rerun-if-changed=` for that path.
    - Reads the file. If missing, prints a helpful error telling the user to run `git submodule update --init --recursive`.
-   - Parses as `serde_json::Value`. Walks the tree to convert OpenAPI 3.1 nullable syntax (`"type": ["string", "null"]`, etc.) into 3.0-compatible `nullable: true` shape. Also bump the top-level `openapi` field to `3.0.3` if progenitor refuses 3.1.
-   - Invokes `progenitor::Generator` with builder-style interface.
+   - Parses as `serde_json::Value`. Extracts `components.schemas`, applying only the JSON Schema preprocessing typify needs.
+   - Invokes `typify::TypeSpace` for model generation only. No HTTP client, operation, or response enum generation happens here.
    - Writes prettyprinted output to `$OUT_DIR/generated.rs`.
 3. Create `crates/ferro-protect/src/generated.rs` containing only:
    ```rust
@@ -429,9 +429,9 @@ Tasks:
 6. Create `UPGRADING.md` at the repo root. It must contain, in order: (a) one-paragraph orientation; (b) the happy path (`./scripts/update-spec <new-version>` then commit); (c) what to do when codegen fails (point at phase 1's fallback options + the `book` of OpenAPI spec massagings in `build.rs`); (d) what to do when wrappers fail to compile (the order is `models.rs` first, then the specific entity module — keep generated types out of public signatures); (e) how to read the generated-code diff under `target/debug/build/ferro-protect-*/out/generated.rs`; (f) a short checklist intended for agents (literal numbered steps a coding agent can follow without further context). Keep the file under 120 lines.
 7. Verify `cargo build` succeeds, `cargo clippy` is clean on hand-written code, `cargo fmt --check` passes, `./scripts/update-spec` (no args) prints the version list. Commit.
 
-If `progenitor` fails on the spec even after the 3.1→3.0 conversion, log the failure mode in `PROGRESS.md` and try one of: (a) more aggressive spec preprocessing, (b) the openapi-generator-cli rust-async template instead, (c) hand-written types for the problematic operations only. Pick whichever gets you unblocked fastest; document the choice.
+If typify fails on a specific schema, log the failure mode in `PROGRESS.md` and try a small preprocessing rule first. If that would be too broad, hand-write that one type in `models.rs` and skip it during codegen via a small allowlist in `build.rs`. Pick whichever gets you unblocked fastest; document the choice.
 
-**Commit message**: `phase(1): wire up progenitor codegen from submoduled spec`
+**Commit message**: `phase(1): wire up typify model codegen from submoduled spec`
 
 ---
 
@@ -443,9 +443,9 @@ Tasks:
 
 1. **Library**: `crates/ferro-protect/src/error.rs` — define a `unifi_protect::Error` enum with `thiserror`. Variants: `Http(reqwest::Error)`, `Api { status: u16, code: String, message: String }`, `Json(serde_json::Error)`, `InvalidUrl(String)`, `MissingApiKey`, `Other(String)`. `pub type Result<T> = std::result::Result<T, Error>;`.
 2. **Library**: `crates/ferro-protect/src/auth.rs` — thin wrapper holding `SecretString` (from `secrecy` crate). Implements a `reqwest::header::HeaderValue` extractor. Header name: `X-API-Key`.
-3. **Library**: `crates/ferro-protect/src/client.rs` — public `ProtectClient` struct with a `builder()` returning `ProtectClientBuilder`. Builder fields: `host`, `api_key` (SecretString), TLS mode (`Native`, `Pinned(Vec<u8>)`, `AcceptInvalid` gated behind `dangerous-tls` feature). `.build()` constructs a `reqwest::Client` with the X-API-Key default header, configured TLS, sensible timeouts (connect 10s, total 30s), HTTP/2. Base URL is `https://{host}/proxy/protect/integration`. Wraps the progenitor-generated client.
-4. **Library**: implement `impl ProtectClient { pub async fn info(&self) -> Result<ApplicationInfo> }`. Map any progenitor errors into `unifi_protect::Error`.
-5. **Library**: re-export the `ApplicationInfo` type (from `generated`) at `unifi_protect::models::ApplicationInfo`. Create `crates/ferro-protect/src/models.rs` for this purpose — every public type re-export from generated code lives here. Consumers must never see `crate::generated::...` types in public signatures. This is the integration seam that absorbs spec changes (see "Forward-compatibility with spec upgrades" above).
+3. **Library**: `crates/ferro-protect/src/client.rs` — public `ProtectClient` struct with a `builder()` returning `ProtectClientBuilder`. Builder fields: `host`, `api_key` (SecretString), TLS mode (`Native`, `Pinned(Vec<u8>)`, `AcceptInvalid` gated behind `dangerous-tls` feature). `.build()` constructs a `reqwest::Client` with the X-API-Key default header, configured TLS, sensible timeouts (connect 10s, total 30s), HTTP/2. Base URL is `https://{host}/proxy/protect/integration`. Builds on shared get/post/patch/bytes helpers.
+4. **Library**: implement `impl ProtectClient { pub async fn info(&self) -> Result<ApplicationInfo> }`.
+5. **Library**: expose `ApplicationInfo` at `unifi_protect::models::ApplicationInfo`. Create `crates/ferro-protect/src/models.rs` for this purpose -- every public type re-export from generated code, plus any tiny hand-written response type for inline operation schemas, lives here. Consumers must never see `crate::generated::...` types in public signatures. This is the integration seam that absorbs spec changes (see "Forward-compatibility with spec upgrades" above).
 6. **Library tests**: `tests/info.rs` — uses `wiremock` to stand up a mock server that responds to `GET /v1/meta/info` with a fixture. Asserts the client parses it correctly. Add a second test for a 401 error response mapping to `Error::Api { status: 401, .. }`.
 7. **Live test**: `tests/live.rs` — at this phase, contains one `live_read_info` test. Use the helpers in `tests/common/mod.rs` (see testing strategy section). Test asserts the version string is non-empty and parses as expected. This test is **not** `#[ignore]`d; it auto-skips when env is absent.
 8. **CLI**: `crates/ferro-protect-cli/src/main.rs` — sketch out the `Cli` struct with global args (`--host`, `--api-key-file`, `--insecure`, `--json`) and a `Commands` enum with a single `Info` variant for now. Defer api_key resolution to phase 3 — for this phase, accept `--api-key` directly as a temporary scaffold (mark it `// TODO: remove in phase 3` and log in PROGRESS).
@@ -640,7 +640,7 @@ These are simple — no body shape complexity. One commit covering all action en
 
 **Goal**: snapshots, stream URLs, talkback session info.
 
-1. `cameras snapshot <id>` — returns `Bytes` in the library. CLI writes to `--out <PATH>`, to stdout if not a TTY, errors with friendly message if stdout is a TTY and no `--out`. Use the `is-terminal` crate. This endpoint will likely need to bypass progenitor's auto-deserialization — call the raw URL via the underlying `reqwest::Client` and return the body bytes.
+1. `cameras snapshot <id>` — returns `Bytes` in the library. CLI writes to `--out <PATH>`, to stdout if not a TTY, errors with friendly message if stdout is a TTY and no `--out`. Use the `is-terminal` crate. This endpoint uses the shared raw-bytes HTTP helper.
 2. `cameras rtsps <id>` — returns the RTSPS URL as a string. Trivial.
 3. `cameras talkback <id>` — returns the WebSocket URL and codec metadata. Library exposes the structured info, CLI prints it. Out of scope: actual audio piping.
 
@@ -702,7 +702,7 @@ If the WebSocket framing turns out to differ from straight JSON-over-WS (it has 
 
 - Repo: <https://github.com/beezly/unifi-apis>
 - Path in submodule: `third_party/unifi-apis/unifi-protect/6.2.83.json`
-- Format: OpenAPI 3.1.0 (needs 3.0 down-conversion for progenitor; see phase 1)
+- Format: OpenAPI 3.1.0; consumed as JSON Schema by typify with minor preprocessing (see phase 1)
 - Base URL pattern: `https://{nvr-host}/proxy/protect/integration` (spec server is `/integration`, paths begin with `/v1/...`)
 - Auth: `X-API-Key` request header
 - Self-signed TLS is the default on consumer NVRs — handle gracefully

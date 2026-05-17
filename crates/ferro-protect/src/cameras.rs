@@ -3,7 +3,7 @@
 use log::{debug, info};
 
 use crate::client::ProtectClient;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Camera, CameraId};
 
 /// Camera-scoped API entry point. Cheap to construct; holds a borrow
@@ -22,14 +22,7 @@ impl<'a> CamerasApi<'a> {
     /// # Errors
     /// [`Error`] -- typically `Http` (network) or `Api` (4xx).
     pub async fn list(&self) -> Result<Vec<Camera>> {
-        debug!("GET /v1/cameras");
-        let resp = self
-            .client
-            .inner
-            .get_cameras()
-            .await
-            .map_err(Error::from_progenitor)?;
-        let cameras = resp.into_inner();
+        let cameras: Vec<Camera> = self.client.get_json("/v1/cameras").await?;
         info!("listed {} camera(s)", cameras.len());
         Ok(cameras)
     }
@@ -40,15 +33,10 @@ impl<'a> CamerasApi<'a> {
     /// [`Error`] -- typically `Http`, `Api { status: 404, .. }` for an
     /// unknown ID, or `Json` if the response body fails the schema.
     pub async fn get(&self, id: &CameraId) -> Result<Camera> {
-        debug!("GET /v1/cameras/{id}");
-        let resp = self
-            .client
-            .inner
-            .get_cameras_id(id)
-            .await
-            .map_err(Error::from_progenitor)?;
-        let camera = resp.into_inner();
-        info!("fetched camera {} ({})", camera.id, camera.name);
+        let path = format!("/v1/cameras/{id}");
+        debug!("GET {path}");
+        let camera: Camera = self.client.get_json(&path).await?;
+        info!("fetched camera {}", camera.id);
         Ok(camera)
     }
 }

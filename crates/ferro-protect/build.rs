@@ -1,4 +1,4 @@
-//! Build-time codegen for the UniFi Protect OpenAPI client.
+//! Build-time codegen for UniFi Protect OpenAPI models.
 //!
 //! Bumping the spec version is a one-line change here -- update `SPEC_VERSION`
 //! (or run `scripts/update-spec` from the repo root, which edits this file
@@ -37,15 +37,33 @@ fn run() -> BuildResult<()> {
     })?;
 
     let raw_value: serde_json::Value = serde_json::from_str(&raw)?;
-    let rewritten = spec_rewrite::rewrite(raw_value);
+    let schemas = spec_rewrite::rewrite(raw_value);
+    let schemas = schemas
+        .get("components")
+        .and_then(|components| components.get("schemas"))
+        .and_then(serde_json::Value::as_object)
+        .ok_or("spec did not contain components.schemas")?;
 
-    let spec: openapiv3::OpenAPI = serde_json::from_value(rewritten)
-        .map_err(|e| format!("Spec failed to parse as OpenAPI 3.0 after down-conversion: {e}"))?;
+    let mut type_defs = Vec::with_capacity(schemas.len());
+    for (name, schema) in schemas {
+        let schema: schemars::schema::Schema =
+            serde_json::from_value(schema.clone()).map_err(|e| {
+                format!(
+                    "schema {name:?} failed to parse as JSON Schema: {e}\n{}",
+                    serde_json::to_string_pretty(schema).unwrap_or_default()
+                )
+            })?;
+        type_defs.push((name.as_str(), schema));
+    }
 
-    let mut generator = progenitor::Generator::default();
-    let tokens = generator
-        .generate_tokens(&spec)
-        .map_err(|e| format!("progenitor codegen error: {e}"))?;
+    let mut settings = typify::TypeSpaceSettings::default();
+    settings.with_derive("PartialEq".to_string());
+    let mut type_space = typify::TypeSpace::new(&settings);
+    type_space
+        .add_ref_types(type_defs)
+        .map_err(|e| format!("typify model codegen error: {e}"))?;
+
+    let tokens = type_space.to_stream();
     let ast =
         syn::parse2(tokens).map_err(|e| format!("syn could not parse generated tokens: {e}"))?;
     let content = prettyplease::unparse(&ast);

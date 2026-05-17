@@ -2,13 +2,16 @@
 
 use std::time::Duration;
 
+use bytes::Bytes;
 use log::{debug, info};
 use reqwest::header::HeaderMap;
 use secrecy::SecretString;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use url::Url;
 
 use crate::auth::{ApiKey, API_KEY_HEADER};
 use crate::error::{Error, Result};
-use crate::generated::Client as Inner;
 use crate::models::ApplicationInfo;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -37,9 +40,8 @@ pub enum TlsMode {
 /// instance across tasks.
 #[derive(Clone)]
 pub struct ProtectClient {
-    /// Crate-visible so per-entity API modules (`cameras.rs`, etc.) can
-    /// call generated methods. Never exposed beyond the crate.
-    pub(crate) inner: Inner,
+    http: reqwest::Client,
+    base_url: Url,
 }
 
 impl ProtectClient {
@@ -56,18 +58,63 @@ impl ProtectClient {
     /// failures, [`Error::Api`] for a non-2xx response, [`Error::Json`]
     /// if the body does not match the schema.
     pub async fn info(&self) -> Result<ApplicationInfo> {
-        debug!("GET /v1/meta/info");
-        let resp = self
-            .inner
-            .get_meta_info()
-            .await
-            .map_err(Error::from_progenitor)?;
-        let info = resp.into_inner();
+        let info: ApplicationInfo = self.get_json("/v1/meta/info").await?;
         info!(
             "fetched application info: version {}",
             info.application_version
         );
         Ok(info)
+    }
+
+    pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        debug!("GET {path}");
+        let response = self.http.get(self.url(path)?).send().await?;
+        Self::json_response(response).await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        debug!("POST {path}");
+        let response = self.http.post(self.url(path)?).json(body).send().await?;
+        Self::json_response(response).await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn patch_json<B: Serialize + Sync, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        debug!("PATCH {path}");
+        let response = self.http.patch(self.url(path)?).json(body).send().await?;
+        Self::json_response(response).await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
+        debug!("GET {path}");
+        let response = self.http.get(self.url(path)?).send().await?;
+        if response.status().is_success() {
+            return Ok(response.bytes().await?);
+        }
+        Err(Error::from_response(response).await)
+    }
+
+    fn url(&self, path: &str) -> Result<Url> {
+        self.base_url
+            .join(path.trim_start_matches('/'))
+            .map_err(|e| Error::InvalidUrl(format!("{path}: {e}")))
+    }
+
+    async fn json_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
+        if response.status().is_success() {
+            return Ok(response.json().await?);
+        }
+        Err(Error::from_response(response).await)
     }
 }
 
@@ -124,7 +171,7 @@ impl ProtectClientBuilder {
     /// - [`Error::Http`] for `reqwest` builder failures.
     pub fn build(self) -> Result<ProtectClient> {
         let api_key = self.api_key.ok_or(Error::MissingApiKey)?;
-        let base_url = match (self.base_url, self.host) {
+        let base_url_raw = match (self.base_url, self.host) {
             (Some(url), _) => url,
             (None, Some(host)) => format!("https://{host}/proxy/protect/integration"),
             (None, None) => {
@@ -133,6 +180,7 @@ impl ProtectClientBuilder {
                 ));
             }
         };
+        let base_url = parse_base_url(&base_url_raw)?;
 
         let header_value = ApiKey::new(api_key)
             .header_value()
@@ -164,11 +212,18 @@ impl ProtectClientBuilder {
         };
 
         let http = builder.build()?;
-        let inner = Inner::new_with_client(&base_url, http);
         info!("ProtectClient built: base_url={base_url}, tls={tls_label}");
         debug!(
             "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}"
         );
-        Ok(ProtectClient { inner })
+        Ok(ProtectClient { http, base_url })
     }
+}
+
+fn parse_base_url(raw: &str) -> Result<Url> {
+    let mut raw = raw.to_string();
+    if !raw.ends_with('/') {
+        raw.push('/');
+    }
+    Url::parse(&raw).map_err(|e| Error::InvalidUrl(format!("{raw}: {e}")))
 }

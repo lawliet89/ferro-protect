@@ -54,7 +54,7 @@ async fn live_read_cameras_list() {
         cameras.len()
     );
     for c in &cameras {
-        println!("  - {} {} state={}", c.id, c.name, c.state);
+        println!("  - {} {:?} state={}", c.id, c.name, c.state);
     }
 }
 
@@ -79,7 +79,7 @@ async fn live_read_cameras_get() {
         .await
         .expect("cameras get call succeeded");
     println!(
-        "live_read_cameras_get: round-tripped {} ({})",
+        "live_read_cameras_get: round-tripped {} ({:?})",
         fetched.id, fetched.name
     );
     assert_eq!(fetched.id, first.id, "list+get should agree on id");
@@ -98,7 +98,7 @@ async fn live_read_chimes_list() {
         .expect("chimes list call succeeded");
     println!("live_read_chimes_list: {} chime(s) returned", chimes.len());
     for c in &chimes {
-        println!("  - {} {} state={}", c.id, c.name, c.state);
+        println!("  - {} {:?} state={}", c.id, c.name, c.state);
     }
 }
 
@@ -123,7 +123,7 @@ async fn live_read_chimes_get() {
         .await
         .expect("chimes get call succeeded");
     println!(
-        "live_read_chimes_get: round-tripped {} ({})",
+        "live_read_chimes_get: round-tripped {} ({:?})",
         fetched.id, fetched.name
     );
     assert_eq!(fetched.id, first.id, "list+get should agree on id");

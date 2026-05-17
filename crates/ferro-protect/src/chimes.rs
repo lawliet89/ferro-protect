@@ -3,7 +3,7 @@
 use log::{debug, info};
 
 use crate::client::ProtectClient;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Chime, ChimeId};
 
 /// Chime-scoped API entry point.
@@ -21,14 +21,7 @@ impl<'a> ChimesApi<'a> {
     /// # Errors
     /// [`Error`] -- typically `Http` (network) or `Api` (4xx).
     pub async fn list(&self) -> Result<Vec<Chime>> {
-        debug!("GET /v1/chimes");
-        let resp = self
-            .client
-            .inner
-            .get_chimes()
-            .await
-            .map_err(Error::from_progenitor)?;
-        let chimes = resp.into_inner();
+        let chimes: Vec<Chime> = self.client.get_json("/v1/chimes").await?;
         info!("listed {} chime(s)", chimes.len());
         Ok(chimes)
     }
@@ -39,15 +32,10 @@ impl<'a> ChimesApi<'a> {
     /// [`Error`] -- typically `Http`, `Api { status: 404, .. }` for an
     /// unknown ID, or `Json` if the response body fails the schema.
     pub async fn get(&self, id: &ChimeId) -> Result<Chime> {
-        debug!("GET /v1/chimes/{id}");
-        let resp = self
-            .client
-            .inner
-            .get_chimes_id(id)
-            .await
-            .map_err(Error::from_progenitor)?;
-        let chime = resp.into_inner();
-        info!("fetched chime {} ({})", chime.id, chime.name);
+        let path = format!("/v1/chimes/{id}");
+        debug!("GET {path}");
+        let chime: Chime = self.client.get_json(&path).await?;
+        info!("fetched chime {}", chime.id);
         Ok(chime)
     }
 }

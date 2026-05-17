@@ -1,7 +1,7 @@
-// This module wraps the progenitor-generated client. Generated code is
-// regenerated from the OpenAPI spec on every build (see `build.rs`). Do not
-// hand-edit anything below the include! line; bump `SPEC_VERSION` in
-// `build.rs` instead, or run `scripts/update-spec`.
+// This module contains typify-generated models. Generated code is regenerated
+// from the OpenAPI spec on every build (see `build.rs`). Do not hand-edit
+// anything below the include! line; bump `SPEC_VERSION` in `build.rs` instead,
+// or run `scripts/update-spec`.
 #![allow(
     clippy::all,
     clippy::pedantic,

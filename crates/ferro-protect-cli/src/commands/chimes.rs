@@ -52,7 +52,7 @@ fn render_table(chimes: &[Chime]) -> String {
         .map(|c| {
             vec![
                 c.id.to_string(),
-                c.name.to_string(),
+                c.name.as_ref().map(ToString::to_string).unwrap_or_default(),
                 c.mac.to_string(),
                 c.state.to_string(),
             ]
@@ -65,7 +65,11 @@ fn render_one(chime: &Chime) -> String {
     format!(
         "ID:    {}\nName:  {}\nMAC:   {}\nState: {}\nPaired cameras: {}\n",
         chime.id,
-        chime.name,
+        chime
+            .name
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
         chime.mac,
         chime.state,
         chime.camera_ids.len(),

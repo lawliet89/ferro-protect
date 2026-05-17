@@ -52,7 +52,7 @@ fn render_table(cameras: &[Camera]) -> String {
         .map(|c| {
             vec![
                 c.id.to_string(),
-                c.name.to_string(),
+                c.name.as_ref().map(ToString::to_string).unwrap_or_default(),
                 c.mac.to_string(),
                 c.state.to_string(),
             ]
@@ -64,6 +64,13 @@ fn render_table(cameras: &[Camera]) -> String {
 fn render_one(camera: &Camera) -> String {
     format!(
         "ID:    {}\nName:  {}\nMAC:   {}\nState: {}\n",
-        camera.id, camera.name, camera.mac, camera.state,
+        camera.id,
+        camera
+            .name
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
+        camera.mac,
+        camera.state,
     )
 }
