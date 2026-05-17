@@ -35,7 +35,7 @@ pub async fn run(client: &ProtectClient, action: Action, json: bool) -> Result<(
                 .cameras()
                 .get(&id)
                 .await
-                .with_context(|| format!("fetching camera {}", id.as_str()))?;
+                .with_context(|| format!("fetching camera {id}"))?;
             output::emit_stdout(&camera, json, || render_one(&camera))?;
         }
     }
