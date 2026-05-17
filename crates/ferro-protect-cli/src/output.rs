@@ -4,7 +4,11 @@
 //! prints either pretty-JSON (if `--json`) or the human-formatted string
 //! produced by the closure.
 
+use std::fmt::Display;
 use std::io::{self, Write};
+
+use comfy_table::presets::UTF8_FULL;
+use comfy_table::{ContentArrangement, Table};
 
 /// Write either JSON or human output, depending on `json`.
 ///
@@ -45,53 +49,119 @@ where
     emit(&mut lock, value, json, render_human)
 }
 
-/// Render a list of rows as a fixed-column table. Columns are sized to the
-/// widest cell. Header row is bolded with terminal escapes when stdout is a
-/// TTY, otherwise plain.
+/// Render a list of rows as a human-readable table.
+///
+/// Callers are expected to short-circuit empty lists with their own
+/// "(no foo)" string; this helper assumes there is at least one row
+/// worth tabulating.
 #[must_use]
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let cols = headers.len();
-    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
-    for row in rows {
-        for (i, cell) in row.iter().enumerate().take(cols) {
-            if cell.len() > widths[i] {
-                widths[i] = cell.len();
-            }
+    let mut table = Table::new();
+    // `UTF8_FULL` over the other comfy-table presets: terminal users get
+    // visible row/column separation without depending on terminal-specific
+    // styling. `ASCII_MARKDOWN` would be nicer for copy-paste into docs but
+    // worse at the keyboard; `NOTHING` collapses to spaces which is too
+    // close to our old hand-rolled output to be worth the dep. Revisit if
+    // a real workflow argues for switching.
+    //
+    // `ContentArrangement::Dynamic` fits the table to the detected terminal
+    // width, wrapping long cells. Behaviour change from the old renderer,
+    // which never truncated -- if a user reports surprise wrapping on
+    // narrow terminals, swap to `ContentArrangement::Disabled`.
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(headers.iter().copied());
+
+    for (row_index, row) in rows.iter().enumerate() {
+        if row.len() != cols {
+            log::warn!(
+                "table row {row_index} has {} cells but {} headers; truncating/padding row to match header width",
+                row.len(),
+                cols
+            );
         }
+
+        let mut normalized_row: Vec<&str> = row.iter().map(String::as_str).take(cols).collect();
+        normalized_row.resize(cols, "");
+        table.add_row(normalized_row);
     }
 
-    let mut out = String::new();
-    push_row(&mut out, headers.iter().copied(), &widths);
-    push_row(
-        &mut out,
-        widths
-            .iter()
-            .map(|w| "-".repeat(*w))
-            .collect::<Vec<_>>()
-            .iter()
-            .map(String::as_str),
-        &widths,
-    );
-    for row in rows {
-        push_row(&mut out, row.iter().map(String::as_str), &widths);
-    }
-    out
+    format!("{table}\n")
 }
 
-fn push_row<'a, I>(out: &mut String, cells: I, widths: &[usize])
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut first = true;
-    for (cell, width) in cells.into_iter().zip(widths.iter()) {
-        if !first {
-            out.push_str("  ");
-        }
-        first = false;
-        out.push_str(cell);
-        for _ in cell.len()..*width {
-            out.push(' ');
-        }
+/// Render an optional `Display`-able value as a string, using the empty
+/// string when `None`. Used by entity renderers for optional fields like
+/// `Camera::name` so each call site stays one expression long.
+#[must_use]
+pub fn display_optional<T: Display>(value: Option<&T>) -> String {
+    value.map(ToString::to_string).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_optional, table};
+
+    #[test]
+    fn table_renders_headers_and_cells() {
+        let out = table(
+            &["ID", "NAME"],
+            &[
+                vec!["cam-1".into(), "Front Door".into()],
+                vec!["cam-2".into(), "Backyard".into()],
+            ],
+        );
+
+        assert!(out.contains("ID"), "header missing: {out}");
+        assert!(out.contains("NAME"), "header missing: {out}");
+        assert!(out.contains("cam-1"), "cell missing: {out}");
+        assert!(out.contains("Front Door"), "cell missing: {out}");
+        assert!(out.contains("Backyard"), "cell missing: {out}");
+        // UTF8_FULL preset uses box-drawing characters; assert one is
+        // present so a future preset swap is a deliberate test failure.
+        assert!(
+            out.contains('─'),
+            "expected UTF8_FULL border char in output: {out}"
+        );
+        assert!(out.ends_with('\n'), "missing trailing newline: {out:?}");
     }
-    out.push('\n');
+
+    #[test]
+    fn table_truncates_extra_cells() {
+        let out = table(
+            &["ID", "NAME"],
+            &[vec![
+                "cam-1".into(),
+                "Front Door".into(),
+                "EXTRA_CELL_SHOULD_NOT_RENDER".into(),
+            ]],
+        );
+
+        assert!(out.contains("cam-1"), "cell missing: {out}");
+        assert!(out.contains("Front Door"), "cell missing: {out}");
+        assert!(
+            !out.contains("EXTRA_CELL_SHOULD_NOT_RENDER"),
+            "extra cell should be truncated: {out}"
+        );
+    }
+
+    #[test]
+    fn table_pads_missing_cells() {
+        let out = table(&["ID", "NAME"], &[vec!["cam-1".into()]]);
+
+        assert!(out.contains("cam-1"), "cell missing: {out}");
+        assert!(out.ends_with('\n'), "missing trailing newline: {out:?}");
+    }
+
+    #[test]
+    fn display_optional_some_renders_value() {
+        let name = String::from("Front Door");
+        assert_eq!(display_optional(Some(&name)), "Front Door");
+    }
+
+    #[test]
+    fn display_optional_none_renders_empty() {
+        assert_eq!(display_optional::<String>(None), "");
+    }
 }
