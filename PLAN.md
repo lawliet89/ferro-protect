@@ -238,6 +238,36 @@ current state is).
 
 ---
 
+## Architecture documentation
+
+`ARCHITECTURE.md` at the repo root is the "start here" doc for a human (or
+agent) who just cloned the repo and wants to understand the shape of the
+codebase before reading any source file. It complements, not replaces, the
+other docs:
+
+- **README.md** — end-user install / run / security
+- **ARCHITECTURE.md** — start-here for code readers (philosophy, invariants, file map, suggested reading order)
+- **UPGRADING.md** — spec-bump procedure
+- **PLAN.md** — phased build plan (this file)
+- **PROGRESS.md** — chronological decision log
+- **rustdoc** — API reference
+
+Rules:
+
+1. ARCHITECTURE.md is a **living document**. Update it whenever a phase
+   changes a structural decision, adds a new module category, or introduces
+   a new invariant. Most phases will not require an update — adding the
+   eleventh wrapper method does not change the architecture; adding the
+   first WebSocket subscriber does.
+2. Keep it tight. Reader's time matters. Target ~300 lines. Push detail to
+   the code or to other docs and link out.
+3. Phase 10 sweep verifies the document still matches reality; any drift is
+   fixed before tagging 0.1.0.
+4. When adding a new top-level module or test pattern, update the file map
+   in the same commit.
+
+---
+
 ## Project layout (target state)
 
 ```
@@ -288,6 +318,7 @@ current state is).
 ├── PLAN.md
 ├── PROGRESS.md
 ├── UPGRADING.md                        # spec-bump procedure (phase 1)
+├── ARCHITECTURE.md                     # start-here for code readers
 ├── CHANGELOG.md
 └── README.md                           # includes "Running tests" section
 ```
@@ -609,7 +640,8 @@ If the WebSocket framing turns out to differ from straight JSON-over-WS (it has 
 8. Final lint sweep: run `cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery` and resolve anything that didn't show up before.
 9. Add an API-surface snapshot test at `crates/ferro-protect/tests/public_api.rs` that imports every `models::*` type we publicly re-export and constructs a default value (or otherwise touches the type) for each. The goal is purely a compile-time canary: if a future spec rename removes a type, this test fails in one obvious place rather than scattered through wrappers.
 10. Sanity-check the upgrade flow: run `./scripts/update-spec` (no args) and confirm it lists versions; then dry-run a bump to the next-newest 6.2.x version on a throwaway branch to verify the script still works end-to-end. Revert. Note the dry-run result in `PROGRESS.md` and `UPGRADING.md`.
-11. Tag the commit `v0.1.0`.
+11. Sweep `ARCHITECTURE.md`: re-read it as if you'd never seen the code, fix any drift, ensure the file map matches the on-disk layout, and confirm every invariant it claims is still enforced.
+12. Tag the commit `v0.1.0`.
 
 **Commit message**: `phase(10): docs, polish, release 0.1.0`
 

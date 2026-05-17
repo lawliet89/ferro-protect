@@ -10,6 +10,10 @@ crates: the `ferro-protect` library and the `ferro-protect-cli` binary
 Pre-0.1.0. Built phase by phase against the OpenAPI spec hosted at
 <https://github.com/beezly/unifi-apis>.
 
+New to the codebase? Start with [ARCHITECTURE.md](ARCHITECTURE.md) — it
+covers the philosophy, the codegen seam, the file map, and a suggested
+reading order before you open any source file.
+
 ## Clone
 
 ```sh
