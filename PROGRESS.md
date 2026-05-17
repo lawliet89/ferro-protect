@@ -589,3 +589,114 @@ between two vocabularies for the same concept. No behaviour change.
   green.
 
 **Next**: Phase 4c (lights read endpoints).
+
+## 2026-05-17 18:06 +0800 — Chore: adaptive rate limiter + Retry-After-aware retry middleware
+
+**Status**: complete
+
+**Summary**:
+The Phase 4 live test suite was flaking under default `cargo test`
+parallelism with `Api { status: 429, code: "TOO_MANY_REQUESTS_ERROR" }`.
+Built the chore against [`docs/TASK_rate_limit.md`](docs/TASK_rate_limit.md):
+proactive throttle + reactive retry, both on by default, so the
+README's `cargo test --all` works against a real NVR without
+`--test-threads=N`.
+
+Empirical step first: a single probe + 15-parallel-curl burst against
+the live NVR captured both a 200 and a 429 response. The server sends
+RFC 9331 headers on every response (`RateLimit-Policy: "10-in-1sec";
+q=10; w=1`), and the 429 includes `Retry-After: 1`. That confirmed
+the design space and the library choice.
+
+Architecture (two cooperating layers):
+
+1. [`src/rate_limit.rs`](crates/ferro-protect/src/rate_limit.rs) —
+   `AdaptiveLimiter` backed by a `tokio::sync::Semaphore` sized to
+   the server's `q`. `acquire()` takes a permit before each request;
+   a tokio task auto-drops it after `window` (1s). `observe()`
+   parses the `RateLimit-Policy` header on every response and grows
+   capacity if the server now advertises a larger quota. Shrinks are
+   `warn!`-logged but not applied — releasing in-flight permits
+   would risk deadlock. Public `RateLimitConfig` exposed on the
+   builder.
+
+2. [`src/retry.rs`](crates/ferro-protect/src/retry.rs) —
+   `RetryAfterAwareMiddleware`. The plan originally recommended
+   `reqwest-retry`, but its `RetryTransientMiddleware` ignores
+   `Retry-After` and uses its own exponential schedule. Wrote ~120
+   lines of custom `reqwest-middleware`: retries 429 (honouring
+   `Retry-After: <seconds>`), 5xx, 408, and connect/read timeouts;
+   exponential backoff with jitter when no server hint is present;
+   bounded by `RetryConfig::max_retries`.
+
+Wired into [`src/client.rs`](crates/ferro-protect/src/client.rs) as
+**two** `ClientWithMiddleware` instances:
+- `http_read` always wraps the retry layer (used by `get_json`,
+  `get_bytes`).
+- `http_write` only wraps it when
+  `ProtectClientBuilder::retry_on_mutations(true)` (used by
+  `post_json`, `patch_json`, `send_no_content`). Default is `false`
+  so a 5xx after the server applied the change is not silently
+  re-fired.
+
+Defaults are deliberately active without any builder call — see the
+non-negotiable section in the chore plan and the README "Quick
+start" promise:
+
+| Knob | Default |
+|---|---|
+| `RateLimitConfig` | `Some({initial_capacity: 10, window: 1s})` |
+| `RetryConfig::max_retries` | 3 |
+| `RetryConfig::initial_backoff` | 200ms |
+| `RetryConfig::max_backoff` | 5s |
+| `retry_on_mutations` | `false` |
+
+**Files added/changed**:
+- `crates/ferro-protect/src/{rate_limit.rs,retry.rs}` (new)
+- `crates/ferro-protect/src/{lib.rs,client.rs,error.rs}` — module
+  decl, public re-exports (`RateLimitConfig`, `RetryConfig`), two
+  middleware clients + limiter on `ProtectClient`, builder knobs,
+  `From<reqwest_middleware::Error>` for `Error`
+- `crates/ferro-protect/tests/rate_limit.rs` (new) — three mocked
+  scenarios: retry-after honoured, retry budget exhaustion, burst
+  capped to capacity
+- `Cargo.toml`, `crates/ferro-protect/Cargo.toml` — added
+  `reqwest-middleware`, `async-trait`, `http`, `rand`, plus runtime
+  `tokio` features (`sync`, `time`, `rt`) and dev feature
+  (`test-util` for paused-time tests)
+- `ARCHITECTURE.md` — new "Rate limiting and retries" section,
+  updated file map with `rate_limit.rs` and `retry.rs`
+- `PLAN.md` — phase 5 intro now flags the
+  `retry_on_mutations=false` default
+- `README.md` — "Quick start" note clarifies that the rate limiter
+  ships on by default
+- `docs/TASK_rate_limit.md` — the chore plan that drove this work
+
+**Verification**:
+- `cargo fmt --check`, `cargo clippy --all-targets --all-features
+  -- -D warnings`, `cargo deny check` — all green
+- `cargo test --workspace --all-features` (mocked only) — green
+- `cargo test --all --features insecure-tls` with a sourced
+  `.env.local` (live NVR) under default parallelism — all 14
+  `live_read_*` tests green. Total live-test suite finished in
+  ~1.4s; the throttle holds requests to the budget but the budget
+  is comfortably wider than the test count.
+
+**Decisions / deviations**:
+- **Rejected `reqwest-retry`**: ignores `Retry-After`. Wrote a
+  custom middleware instead. The whole point of layering retry-with-
+  backoff over the server's hint was to *honour* the hint.
+- **Two middleware clients, not one**: simpler than a custom
+  per-request retry-bypass mechanism. Costs nothing — `reqwest::Client`
+  is `Arc`-internal.
+- **Shrinks are not applied**: if the server tightens its policy
+  mid-session, we log a warning but don't reclaim in-flight
+  permits. Doing so would either require cancellation tokens on
+  in-flight requests (over-engineered) or risk deadlock. Protect
+  has never been observed to tighten its policy mid-session.
+- **Pinned `reqwest-middleware = 0.4`**: `0.5` requires `reqwest = 0.13`,
+  our workspace is on `0.12`. Bumping reqwest is a separate chore.
+
+**Next**: Phase 4 is complete. Phase 5 (mutating CRUD) can begin;
+the `retry_on_mutations=false` default is the relevant invariant for
+that phase.

@@ -5,6 +5,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use log::{debug, info};
 use reqwest::header::HeaderMap;
+use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use secrecy::SecretString;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -13,9 +14,15 @@ use url::Url;
 use crate::auth::{ApiKey, API_KEY_HEADER};
 use crate::error::{Error, Result};
 use crate::models::ApplicationInfo;
+use crate::rate_limit::{AdaptiveLimiter, RateLimitConfig};
+use crate::retry::RetryAfterAwareMiddleware;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+const DEFAULT_MAX_RETRIES: u32 = 3;
+const DEFAULT_RETRY_INITIAL_BACKOFF: Duration = Duration::from_millis(200);
+const DEFAULT_RETRY_MAX_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Controls how the underlying TLS stack validates the NVR's certificate.
 ///
@@ -33,15 +40,59 @@ pub enum TlsMode {
     AcceptInvalid,
 }
 
+/// Retry policy for transient HTTP failures.
+///
+/// Covers 429 Too Many Requests, 5xx, and connect/read timeouts. The
+/// retry middleware honours `Retry-After` headers when the server
+/// provides one (e.g. UniFi Protect returns `retry-after: 1` on 429),
+/// falling back to exponential backoff with jitter between
+/// `initial_backoff` and `max_backoff`.
+///
+/// Mutations (POST/PATCH/DELETE) are **not** retried by default --
+/// the same backoff policy is only applied to GETs unless
+/// [`ProtectClientBuilder::retry_on_mutations`] is set. Retrying a
+/// non-idempotent request after a 5xx can silently double-apply the
+/// effect because the server may have processed the original request
+/// before the response failed to return.
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    pub max_retries: u32,
+    pub initial_backoff: Duration,
+    pub max_backoff: Duration,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: DEFAULT_MAX_RETRIES,
+            initial_backoff: DEFAULT_RETRY_INITIAL_BACKOFF,
+            max_backoff: DEFAULT_RETRY_MAX_BACKOFF,
+        }
+    }
+}
+
 /// Async client for the UniFi Protect local integration API.
 ///
 /// Construct via [`ProtectClient::builder`]. The client is `Clone`-cheap
 /// (the underlying `reqwest::Client` is reference-counted) so share one
 /// instance across tasks.
+///
+/// **Defaults you get for free:** a proactive rate limiter sized to the
+/// server's advertised quota (10 requests / 1 second on Protect 7.1.60)
+/// and a retry middleware that honours `Retry-After` on 429 / 5xx for
+/// idempotent reads. Both are configurable on the builder; see
+/// [`RateLimitConfig`] and [`RetryConfig`].
 #[derive(Clone)]
 pub struct ProtectClient {
-    http: reqwest::Client,
+    /// Used for idempotent reads (GET). Always wraps the retry middleware.
+    http_read: ClientWithMiddleware,
+    /// Used for mutations (POST/PATCH/DELETE/...). Goes through the retry
+    /// middleware only when `retry_on_mutations` is set; otherwise it is
+    /// a plain `reqwest::Client` wrapped without middleware so failing
+    /// writes surface immediately rather than getting silently re-applied.
+    http_write: ClientWithMiddleware,
     base_url: Url,
+    limiter: Option<AdaptiveLimiter>,
 }
 
 impl ProtectClient {
@@ -68,7 +119,9 @@ impl ProtectClient {
 
     pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         debug!("GET {path}");
-        let response = self.http.get(self.url(path)?).send().await?;
+        self.acquire().await;
+        let response = self.http_read.get(self.url(path)?).send().await?;
+        self.observe(response.headers());
         Self::json_response(response).await
     }
 
@@ -84,7 +137,14 @@ impl ProtectClient {
         body: &B,
     ) -> Result<T> {
         debug!("POST {path}");
-        let response = self.http.post(self.url(path)?).json(body).send().await?;
+        self.acquire().await;
+        let response = self
+            .http_write
+            .post(self.url(path)?)
+            .json(body)
+            .send()
+            .await?;
+        self.observe(response.headers());
         Self::json_response(response).await
     }
 
@@ -95,7 +155,14 @@ impl ProtectClient {
         body: &B,
     ) -> Result<T> {
         debug!("PATCH {path}");
-        let response = self.http.patch(self.url(path)?).json(body).send().await?;
+        self.acquire().await;
+        let response = self
+            .http_write
+            .patch(self.url(path)?)
+            .json(body)
+            .send()
+            .await?;
+        self.observe(response.headers());
         Self::json_response(response).await
     }
 
@@ -107,7 +174,13 @@ impl ProtectClient {
     #[allow(dead_code)]
     pub(crate) async fn send_no_content(&self, method: reqwest::Method, path: &str) -> Result<()> {
         debug!("{method} {path}");
-        let response = self.http.request(method, self.url(path)?).send().await?;
+        self.acquire().await;
+        let response = self
+            .http_write
+            .request(method, self.url(path)?)
+            .send()
+            .await?;
+        self.observe(response.headers());
         if response.status().is_success() {
             return Ok(());
         }
@@ -117,11 +190,25 @@ impl ProtectClient {
     #[allow(dead_code)]
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
-        let response = self.http.get(self.url(path)?).send().await?;
+        self.acquire().await;
+        let response = self.http_read.get(self.url(path)?).send().await?;
+        self.observe(response.headers());
         if response.status().is_success() {
             return Ok(response.bytes().await?);
         }
         Err(Error::from_response(response).await)
+    }
+
+    async fn acquire(&self) {
+        if let Some(limiter) = &self.limiter {
+            limiter.acquire().await;
+        }
+    }
+
+    fn observe(&self, headers: &HeaderMap) {
+        if let Some(limiter) = &self.limiter {
+            limiter.observe(headers);
+        }
     }
 
     fn url(&self, path: &str) -> Result<Url> {
@@ -145,6 +232,10 @@ pub struct ProtectClientBuilder {
     base_url: Option<String>,
     api_key: Option<SecretString>,
     tls: TlsMode,
+    retry: RetryConfig,
+    retry_on_mutations: bool,
+    rate_limit: Option<RateLimitConfig>,
+    rate_limit_overridden: bool,
 }
 
 impl ProtectClientBuilder {
@@ -177,6 +268,41 @@ impl ProtectClientBuilder {
     #[must_use]
     pub fn tls(mut self, mode: TlsMode) -> Self {
         self.tls = mode;
+        self
+    }
+
+    /// Override the transient-failure retry policy. Defaults give
+    /// `max_retries=3`, exponential backoff between 200ms and 5s, with
+    /// `Retry-After` honoured when the server returns it.
+    #[must_use]
+    pub const fn retry(mut self, config: RetryConfig) -> Self {
+        self.retry = config;
+        self
+    }
+
+    /// Apply the retry policy to mutating verbs as well as GETs.
+    /// Default is `false` -- mutations bypass the retry middleware so
+    /// that a transient 5xx after the server already applied the change
+    /// is not silently re-applied.
+    #[must_use]
+    pub const fn retry_on_mutations(mut self, enabled: bool) -> Self {
+        self.retry_on_mutations = enabled;
+        self
+    }
+
+    /// Override the proactive rate-limit configuration. `Some(config)`
+    /// installs an adaptive limiter starting at the given capacity and
+    /// growing if the server advertises a larger budget; `None`
+    /// disables the proactive throttle entirely (the retry middleware
+    /// still recovers from any 429s the server returns).
+    ///
+    /// The default is `Some(RateLimitConfig::default())`, which matches
+    /// the policy Protect 7.1.60 advertises (10 requests / 1 second).
+    /// Most callers should not change this.
+    #[must_use]
+    pub const fn rate_limit(mut self, config: Option<RateLimitConfig>) -> Self {
+        self.rate_limit = config;
+        self.rate_limit_overridden = true;
         self
     }
 
@@ -215,28 +341,81 @@ impl ProtectClientBuilder {
             TlsMode::AcceptInvalid => "accept-invalid (insecure!)",
         };
 
-        let mut builder = reqwest::ClientBuilder::new()
+        let mut reqwest_builder = reqwest::ClientBuilder::new()
             .default_headers(headers)
             .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
             .timeout(DEFAULT_TOTAL_TIMEOUT);
 
-        builder = match self.tls {
-            TlsMode::Native => builder,
+        reqwest_builder = match self.tls {
+            TlsMode::Native => reqwest_builder,
             TlsMode::Pinned(pem) => {
                 let cert = reqwest::Certificate::from_pem(&pem)
                     .map_err(|e| Error::Other(format!("invalid pinned certificate: {e}")))?;
-                builder.add_root_certificate(cert)
+                reqwest_builder.add_root_certificate(cert)
             }
             #[cfg(feature = "insecure-tls")]
-            TlsMode::AcceptInvalid => builder.danger_accept_invalid_certs(true),
+            TlsMode::AcceptInvalid => reqwest_builder.danger_accept_invalid_certs(true),
         };
 
-        let http = builder.build()?;
-        info!("ProtectClient built: base_url={base_url}, tls={tls_label}");
+        let reqwest_client = reqwest_builder.build()?;
+
+        let retry_middleware = RetryAfterAwareMiddleware {
+            max_retries: self.retry.max_retries,
+            initial_backoff: self.retry.initial_backoff,
+            max_backoff: self.retry.max_backoff,
+        };
+
+        let http_read = MiddlewareClientBuilder::new(reqwest_client.clone())
+            .with(retry_middleware.clone())
+            .build();
+
+        let http_write = if self.retry_on_mutations {
+            MiddlewareClientBuilder::new(reqwest_client)
+                .with(retry_middleware)
+                .build()
+        } else {
+            MiddlewareClientBuilder::new(reqwest_client).build()
+        };
+
+        // Rate-limit semantics: `Option<RateLimitConfig>` means
+        // `Some(custom)` / `None` (explicitly disabled) when the user
+        // called `.rate_limit(...)`. If they did not call it at all, we
+        // install the default `Some(RateLimitConfig::default())` so the
+        // README's `cargo test --all` works against a real NVR without
+        // any opt-in.
+        let effective_rate_limit = if self.rate_limit_overridden {
+            self.rate_limit.clone()
+        } else {
+            Some(RateLimitConfig::default())
+        };
+        let limiter = effective_rate_limit.as_ref().map(AdaptiveLimiter::new);
+
+        let rate_limit_label = match (&effective_rate_limit, self.rate_limit_overridden) {
+            (Some(cfg), true) => format!(
+                "custom ({}/{}ms)",
+                cfg.initial_capacity,
+                cfg.window.as_millis()
+            ),
+            (Some(_), false) => "default (10/1000ms)".to_string(),
+            (None, _) => "disabled".to_string(),
+        };
+
+        info!(
+            "ProtectClient built: base_url={base_url}, tls={tls_label}, retry={{max={}, initial={:?}, max={:?}, on_mutations={}}}, rate_limit={rate_limit_label}",
+            self.retry.max_retries,
+            self.retry.initial_backoff,
+            self.retry.max_backoff,
+            self.retry_on_mutations,
+        );
         debug!(
             "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}"
         );
-        Ok(ProtectClient { http, base_url })
+        Ok(ProtectClient {
+            http_read,
+            http_write,
+            base_url,
+            limiter,
+        })
     }
 }
 

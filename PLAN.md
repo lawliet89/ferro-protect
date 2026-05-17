@@ -295,6 +295,8 @@ By the end of phase 4 the library has roughly 14 typed methods and the CLI is a 
 
 **Goal**: configuration changes via PATCH and creates via POST, in order of increasing impact.
 
+> Note: the retry middleware added before phase 5 deliberately does **not** retry POST/PATCH/DELETE by default ([`ProtectClientBuilder::retry_on_mutations`](crates/ferro-protect/src/client.rs)). A 5xx after the server has already applied the change must not silently re-fire. Tests that intentionally exercise mutation retries should opt in explicitly.
+
 Order (one commit per entity):
 
 1. `viewers patch <id>` (rename, change attached liveview — lowest blast radius).

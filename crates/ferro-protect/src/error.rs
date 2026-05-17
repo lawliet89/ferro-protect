@@ -15,6 +15,11 @@ pub enum Error {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Failure from the middleware stack (retry policy exhausted,
+    /// custom middleware error, etc.).
+    #[error("HTTP middleware error: {0}")]
+    Middleware(String),
+
     /// The server returned a structured error response. `status` is the HTTP
     /// status code, `code` is the API's symbolic error name (e.g.
     /// `"unauthorized"`), and `message` is its human-readable text.
@@ -68,6 +73,15 @@ impl Error {
             status: status.as_u16(),
             code: code.into(),
             message: message.into(),
+        }
+    }
+}
+
+impl From<reqwest_middleware::Error> for Error {
+    fn from(err: reqwest_middleware::Error) -> Self {
+        match err {
+            reqwest_middleware::Error::Reqwest(e) => Self::Http(e),
+            reqwest_middleware::Error::Middleware(e) => Self::Middleware(e.to_string()),
         }
     }
 }
