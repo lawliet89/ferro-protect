@@ -8,11 +8,16 @@ If you want to **use** the library or CLI, read [README.md](README.md) instead.
 If you want to **bump the spec version**, read [UPGRADING.md](UPGRADING.md).
 If you want the day-by-day **history of decisions**, read
 [PROGRESS.md](PROGRESS.md). The phased build plan lives in
-[PLAN.md](PLAN.md).
+[PLAN.md](PLAN.md). If you are an **agent** about to make changes,
+read [AGENT.md](AGENT.md) first — it carries the cross-cutting
+operating rules (commits, signing, gates, invariants, testing,
+logging).
 
 This document is a living one. It is updated whenever a phase changes
 structural decisions, adds a new module category, or introduces a new
-invariant. See PLAN.md "Architecture documentation" for the rules.
+invariant. See
+[AGENT.md → Architecture documentation maintenance](AGENT.md#architecture-documentation-maintenance)
+for the rules.
 
 ---
 
