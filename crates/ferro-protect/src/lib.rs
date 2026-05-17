@@ -28,6 +28,8 @@
 //!
 //! Levels we emit at:
 //!
+//! - `info!`  -- client built, application info fetched, entity list/get
+//!   operations completed
 //! - `debug!` -- each outbound request, builder finalisation
 //! - `warn!`  -- response-mapping fallback paths (unexpected body shape,
 //!   unknown error code, etc.)

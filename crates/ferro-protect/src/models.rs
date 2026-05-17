@@ -1,7 +1,7 @@
 //! Public re-exports of types that cross the library boundary.
 //!
-//! This module is the integration seam between the progenitor-generated
-//! code (which lives in `crate::generated`) and the rest of the library.
+//! This module is the integration seam between the typify-generated code
+//! (which lives in `crate::generated`) and the rest of the library.
 //! Every public type the library exposes is re-exported (and, where it
 //! helps ergonomics, renamed) here.
 //!
@@ -11,6 +11,17 @@
 //!
 //! **Do not** name `crate::generated::...` types in any public signature.
 
-pub use crate::generated::types::{
-    Camera, CameraId, Chime, ChimeId, GetMetaInfoResponse as ApplicationInfo, ProtectVersion,
-};
+use serde::{Deserialize, Serialize};
+
+pub use crate::generated::{Camera, CameraId, Chime, ChimeId, ProtectVersion};
+
+/// Application metadata returned by `GET /v1/meta/info`.
+///
+/// This response schema is inline in the OpenAPI operation rather than named
+/// under `components.schemas`, so the models-only codegen pipeline cannot
+/// produce it from the component set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationInfo {
+    #[serde(rename = "applicationVersion")]
+    pub application_version: ProtectVersion,
+}

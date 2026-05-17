@@ -376,3 +376,23 @@ summary entry after `viewers`. Cameras (b583f79) introduced the
 per-entity wrapper pattern, the `commands/` module, and the shared
 `output.rs` for the JSON-vs-human-table dispatch; chimes follows the
 same template.)
+
+## 2026-05-17 14:15 +0800 — Chore: migrate codegen to typify models-only
+
+**Status**: complete
+**Summary**: Replaced progenitor client generation with typify model generation over `components.schemas`, ported `ProtectClient` and existing info/cameras/chimes wrappers to shared `reqwest` helpers, and removed progenitor-specific error mapping. The old full spec-rewrite snapshot was replaced with a focused model seam smoke test. Docs now describe the models-only substrate and the hand-written HTTP wrapper pattern.
+
+**Files added/changed**:
+- `Cargo.toml`, `Cargo.lock`, `crates/ferro-protect/Cargo.toml`
+- `crates/ferro-protect/build.rs`, `crates/ferro-protect/build_support/spec_rewrite.rs`
+- `crates/ferro-protect/src/client.rs`, `error.rs`, `models.rs`, `generated.rs`, `cameras.rs`, `chimes.rs`
+- `crates/ferro-protect-cli/src/commands/cameras.rs`, `crates/ferro-protect-cli/src/commands/chimes.rs`
+- `crates/ferro-protect/tests/model_codegen.rs`, `tests/info.rs`, `tests/live.rs`
+- `PLAN.md`, `UPGRADING.md`, `ARCHITECTURE.md`
+
+**Decisions / deviations**:
+- Chose the task's Option B: parse the OpenAPI document as `serde_json::Value`, extract `components.schemas`, and feed those schemas directly to typify. This kept the build script smaller and avoided adding `oas3`, since the codegen path does not need type-safe operation traversal.
+- Kept a small schema preprocessing layer: `const` to single-value `enum`, nullable `type` arrays to `anyOf`, singleton `allOf` flattening, `additionalProperties: false` stripping near combinators, collision-prone enum relaxation, and smart-audio enum relaxation for observed 6.2.x live/spec drift.
+- `ApplicationInfo` is hand-written in `models.rs` because the info response schema is inline under the operation response, not named under `components.schemas`.
+
+**Next**: Continue Phase 4 from the branch's existing cameras/chimes work, using shared HTTP helpers for the remaining entity wrappers.

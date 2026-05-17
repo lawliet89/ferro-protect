@@ -21,8 +21,8 @@ invariant. See PLAN.md "Architecture documentation" for the rules.
 A Rust client for the UniFi Protect local integration API, plus a CLI that
 exercises it. Two crates in one Cargo workspace:
 
-- **`ferro-protect`** — async library. Wraps an OpenAPI-generated HTTP
-  client behind a hand-written, ergonomic surface.
+- **`ferro-protect`** — async library. Uses typify-generated models behind a
+  hand-written `reqwest` client surface.
 - **`ferro-protect-cli`** — `clap`-based binary named `ferro-protect`. Real
   tool; also a living integration test for the library.
 
@@ -45,23 +45,24 @@ a time via a single constant in [`crates/ferro-protect/build.rs`](crates/ferro-p
 │  crates/ferro-protect/build.rs                                      │
 │  ─ reads the pinned spec                                            │
 │  ─ delegates to build_support/spec_rewrite.rs::rewrite()            │
-│  ─ feeds rewritten spec to progenitor                               │
+│  ─ feeds component schemas to typify                                │
 │  ─ writes $OUT_DIR/generated.rs                                     │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  crates/ferro-protect/src/generated.rs                              │
-│  ─ one line:  include!(concat!(env!("OUT_DIR"), "/generated.rs"))   │
-│  ─ pub(crate) only — never exposed to library users                 │
+│  ─ one meaningful line:                                             │
+│      include!(concat!(env!("OUT_DIR"), "/generated.rs"))            │
+│  ─ private module — only models.rs re-exports from it               │
 │  ─ permissively #[allow(...)]'d so generated code never blocks      │
 │    our pedantic+nursery clippy gate                                 │
 └──────────────────────────────────┬──────────────────────────────────┘
-                                   │ types::*  +  Client
+                                   │ generated model types
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  crates/ferro-protect/src/models.rs    ← THE SEAM                   │
-│  ─ pub use crate::generated::types::Foo (optionally renamed)        │
+│  ─ pub use crate::generated::Foo (optionally renamed)               │
 │  ─ the ONLY place hand-written code names generated types           │
 │  ─ when a spec bump renames a type, this file is the first fix      │
 └──────────────────────────────────┬──────────────────────────────────┘
@@ -70,7 +71,7 @@ a time via a single constant in [`crates/ferro-protect/build.rs`](crates/ferro-p
 ┌─────────────────────────────────────────────────────────────────────┐
 │  hand-written wrappers (src/client.rs, src/error.rs, src/auth.rs)   │
 │  ─ ProtectClient / ProtectClientBuilder                             │
-│  ─ Error enum + generic from_progenitor adaptor                     │
+│  ─ shared reqwest helpers + uniform Error mapping                   │
 │  ─ ApiKey + X-API-Key header plumbing                               │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │ public API
@@ -89,42 +90,39 @@ a time via a single constant in [`crates/ferro-protect/build.rs`](crates/ferro-p
 
 ### Codegen, not hand-rolled types
 
-The Protect spec defines 158 types and 35 operations. Hand-writing them
+The Protect spec defines 158 types and 35 operations. Hand-writing the models
 would be 95% rote and 5% interesting; worse, every spec bump would be a
-manual diff session. `progenitor` consumes the OpenAPI document at build
-time and emits the typed client.
+manual diff session. `typify` consumes the OpenAPI component schemas at build
+time and emits the Rust model types.
 
-But progenitor takes OpenAPI 3.0 input (via the `openapiv3` crate), and
-the Protect spec is OpenAPI 3.1 with a handful of progenitor-hostile
-quirks. `build_support/spec_rewrite.rs` applies a small set of rewrites
-(`type: [X,null]` → `nullable: true`, `oneOf: [<T>, null]` collapse,
-`const` → single-element `enum`, synthesised `operationId`s for every
-operation, etc.) before handing the document to progenitor. See
+The Protect spec is OpenAPI 3.1, so `build_support/spec_rewrite.rs` applies a
+small schema-only preprocessing pass (`const` → single-element `enum`,
+nullable `type` arrays to `anyOf`, singleton `allOf` flattening, etc.) before
+handing the schemas to typify. See
 [UPGRADING.md](UPGRADING.md) for the full list and the panic-site
 playbook.
 
-### A snapshot test guards the rewrites
+### A model smoke test guards the seam
 
-`crates/ferro-protect/tests/spec_rewrite_snapshot.rs` runs the pinned
-spec through `spec_rewrite::rewrite()` and asserts the output via `insta`.
-Any change to the rewrites or the input spec becomes a reviewable diff.
-The accepted `.snap` is committed; see UPGRADING.md "When the snapshot
-test fails" for the review flow.
+`crates/ferro-protect/tests/model_codegen.rs` touches representative
+`models::*` re-exports and round-trips the inline `ApplicationInfo` response.
+It is intentionally small: build failures and this test catch type rename or
+derive drift without snapshotting the full generated source.
 
 ### The `models.rs` seam absorbs spec changes
 
-Hand-written code **never** names `crate::generated::types::Foo` directly.
+Hand-written code **never** names `crate::generated::Foo` directly.
 Every type that crosses a public signature is re-exported (and sometimes
 renamed) in `src/models.rs`. When a spec bump renames `LiveviewSettings`
 to `LiveviewConfig`, the fix lives in `models.rs` — wrappers downstream
 keep using `models::Liveview` and never notice.
 
-### Wrappers delegate, they do not re-implement
+### Wrappers stay mechanical
 
-Every method on `ProtectClient` is a thin shim that calls the generated
-client method, runs the result through `Error::from_progenitor`, and
-returns a `models::*` type. Builder bodies are reused from progenitor
-when present, hand-written only when the spec leaves them free-form.
+Every wrapper method is a thin shim around shared HTTP helpers on
+`ProtectClient` (`get_json`, `post_json`, `patch_json`, `get_bytes`) and
+returns a `models::*` type. URL joining, JSON decoding, byte responses, and
+non-2xx error mapping stay in those helpers.
 
 ### Single source of truth for the spec version
 
@@ -185,21 +183,20 @@ The current state. Updated whenever the structure changes.
 |---|---|
 | [Cargo.toml](crates/ferro-protect/Cargo.toml) | Library manifest. `[features] dangerous-tls = []` for opt-in insecure TLS. |
 | [build.rs](crates/ferro-protect/build.rs) | Codegen entry point. Holds `SPEC_VERSION`. Delegates rewrite to `build_support/spec_rewrite.rs`. |
-| [build_support/spec_rewrite.rs](crates/ferro-protect/build_support/spec_rewrite.rs) | Pure rewrite pipeline. `pub fn rewrite(serde_json::Value) -> serde_json::Value`. Imported by both `build.rs` and the snapshot test via `#[path = "..."]`. |
+| [build_support/spec_rewrite.rs](crates/ferro-protect/build_support/spec_rewrite.rs) | Pure schema preprocessing pipeline. `pub fn rewrite(serde_json::Value) -> serde_json::Value`. |
 | [src/lib.rs](crates/ferro-protect/src/lib.rs) | Crate root. Module declarations, public re-exports, quickstart doctest. |
-| [src/error.rs](crates/ferro-protect/src/error.rs) | `Error` enum + `Result` alias. Generic `Error::from_progenitor<E: Serialize>` adaptor reads `name`/`error` fields out of any spec error body. |
+| [src/error.rs](crates/ferro-protect/src/error.rs) | `Error` enum + `Result` alias. Non-2xx responses are mapped from `{ name, error/message }` bodies with a raw-body fallback. |
 | [src/auth.rs](crates/ferro-protect/src/auth.rs) | `ApiKey(SecretString)` wrapper. `API_KEY_HEADER` constant. |
-| [src/models.rs](crates/ferro-protect/src/models.rs) | **The seam.** Public re-exports from `generated::types::*`. |
+| [src/models.rs](crates/ferro-protect/src/models.rs) | **The seam.** Public re-exports from generated model types plus tiny hand-written inline response models. |
 | [src/client.rs](crates/ferro-protect/src/client.rs) | `ProtectClient`, `ProtectClientBuilder`, `TlsMode`. The user-facing surface. |
-| [src/generated.rs](crates/ferro-protect/src/generated.rs) | Three lines: a permissive `#![allow(...)]` block and `include!(env!("OUT_DIR") + "/generated.rs")`. `pub(crate)` only. |
+| [src/generated.rs](crates/ferro-protect/src/generated.rs) | A permissive `#![allow(...)]` block and `include!(concat!(env!("OUT_DIR"), "/generated.rs"))`. Declared as a private `mod generated;` in `lib.rs`; only `models.rs` re-exports from it. |
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
 | [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
 | [tests/live.rs](crates/ferro-protect/tests/live.rs) | Live tests against a real NVR. Auto-skip when env absent. |
 | [tests/common/mod.rs](crates/ferro-protect/tests/common/mod.rs) | `live_client() -> Option<ProtectClient>`, `mutations_allowed() -> bool`. Pulled in by each live test via `mod common;`. |
-| [tests/spec_rewrite_snapshot.rs](crates/ferro-protect/tests/spec_rewrite_snapshot.rs) | Insta snapshot test for the rewrite pipeline output. |
+| [tests/model_codegen.rs](crates/ferro-protect/tests/model_codegen.rs) | Smoke test for generated-model re-exports and inline response models. |
 | [tests/fixtures/](crates/ferro-protect/tests/fixtures/) | Canned JSON for wiremock tests. |
-| [tests/snapshots/](crates/ferro-protect/tests/snapshots/) | Accepted insta snapshots. |
 
 ### `crates/ferro-protect-cli/` (CLI)
 
@@ -237,16 +234,12 @@ pub enum Error {
 }
 ```
 
-`Error::from_progenitor<E: Serialize>` is the bridge from progenitor's
-`Error<E>` to ours. It is generic so every operation in the generated
-client (which carries its own error-body schema) maps through one
-function. The adaptor serialises the error body to JSON and pulls `name`
-and `error` fields — the shape the Protect spec consistently uses. Any
-body without those fields falls back to stringified output.
+The shared HTTP helpers map non-2xx responses into `Error::Api`. They read the
+Protect error shape (`name` plus `error` or `message`) and fall back to a
+truncated raw body when the shape is unexpected.
 
 When a new endpoint surfaces a novel error body shape, the right move is
-usually to extend the JSON-field probe in `extract_code_and_message`, not
-to add a new wrapper. The whole point is one Error type, one adaptor.
+usually to extend that single mapper, not to add endpoint-local error code.
 
 ---
 
@@ -319,11 +312,16 @@ Three layers, all driven by `cargo test --all`. None are `#[ignore]`d.
    additionally on `UNIFI_PROTECT_ALLOW_MUTATIONS=1` via
    `common::mutations_allowed()`.
 
-`insta` snapshots are used **only** for outputs of deterministic, pure
-transformations: the spec rewrite pipeline (now), and the CLI `--help` /
-canonical error-message text (planned for phase 10). Snapshots are
-deliberately not used for response bodies — those should be asserted on
-specific fields so a test's intent stays readable.
+`insta` snapshots are reserved for outputs of deterministic, pure
+transformations. None are currently active — the spec rewrite snapshot
+was retired when typify replaced progenitor (the rewrite layer shrank
+so much it no longer warrants a snapshot, and
+`tests/model_codegen.rs` covers the seam). Phase 10 will add snapshots
+for the CLI `--help` text and canonical error messages; the `insta` +
+`similar` `[profile.dev.package]` overrides in the workspace
+[Cargo.toml](Cargo.toml) stay in place for that future use. Snapshots
+are deliberately not used for response bodies — those should be
+asserted on specific fields so a test's intent stays readable.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) explicitly
 errors out if any `UNIFI_PROTECT_*` env var is present in the
@@ -344,8 +342,8 @@ Suggested order if you want to understand the code end to end:
    5 minutes. The builder, the TLS modes, the `info()` shim — read this
    to understand the shape every future wrapper method will follow.
 4. [`crates/ferro-protect/src/error.rs`](crates/ferro-protect/src/error.rs) —
-   3 minutes. Especially `from_progenitor` — that adaptor is the
-   linchpin of error mapping across every endpoint in later phases.
+   3 minutes. The response mapper is the linchpin of error handling across
+   every endpoint in later phases.
 5. [`crates/ferro-protect/build.rs`](crates/ferro-protect/build.rs) and
    [`crates/ferro-protect/build_support/spec_rewrite.rs`](crates/ferro-protect/build_support/spec_rewrite.rs) —
    10 minutes. Skim the rewrite cases; do not try to memorise.

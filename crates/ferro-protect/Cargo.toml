@@ -20,21 +20,19 @@ default = []
 dangerous-tls = []
 
 [dependencies]
-progenitor-client = { workspace = true }
 reqwest = { workspace = true }
 bytes = { workspace = true }
-chrono = { workspace = true }
-futures-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 secrecy = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+url = { workspace = true }
 
 [build-dependencies]
-progenitor = { workspace = true }
-openapiv3 = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
+typify = { workspace = true }
 syn = { workspace = true }
 prettyplease = { workspace = true }
 

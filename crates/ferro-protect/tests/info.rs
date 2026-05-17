@@ -2,8 +2,7 @@
 #![allow(clippy::pedantic, clippy::nursery)]
 
 //! `client.info()` against a mock NVR. Covers the happy path and a 401
-//! error response so the progenitor -> our-Error mapping is exercised
-//! end-to-end.
+//! error response so our response mapping is exercised end-to-end.
 
 use ferro_protect::{Error, ProtectClient};
 use secrecy::SecretString;

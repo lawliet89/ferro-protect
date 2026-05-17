@@ -1,6 +1,7 @@
 //! Error type for the ferro-protect client.
 
 use log::warn;
+use reqwest::StatusCode;
 use thiserror::Error;
 
 /// Convenience alias for `Result<T, ferro_protect::Error>`.
@@ -43,57 +44,58 @@ pub enum Error {
 }
 
 impl Error {
-    /// Translate a progenitor-client error into our public `Error`.
-    ///
-    /// Generic over the error-body type `E` because each generated operation
-    /// can declare its own error schema. We serialize the body to JSON and
-    /// look up the `name`/`error` fields the Protect spec consistently uses;
-    /// any other shape falls back to a stringified message.
-    pub(crate) fn from_progenitor<E>(err: progenitor_client::Error<E>) -> Self
-    where
-        E: serde::Serialize,
-    {
-        use progenitor_client::Error as P;
-        match err {
-            P::CommunicationError(e) | P::ResponseBodyError(e) => Self::Http(e),
-            P::InvalidUpgrade(e) => Self::Other(format!("websocket upgrade failed: {e}")),
-            P::ErrorResponse(rv) => {
-                let status = rv.status().as_u16();
-                let body = rv.into_inner();
-                let (code, message) = extract_code_and_message(&body);
-                Self::Api {
-                    status,
-                    code,
-                    message,
-                }
+    pub(crate) async fn from_response(response: reqwest::Response) -> Self {
+        let status = response.status();
+        let raw = match response.text().await {
+            Ok(body) => body,
+            Err(e) => return Self::Http(e),
+        };
+
+        match serde_json::from_str::<ApiErrorBody>(&raw) {
+            Ok(body) => {
+                let code = body.name.clone();
+                Self::api(status, code, body.message())
             }
-            P::InvalidResponsePayload(_, e) => Self::Json(e),
-            P::UnexpectedResponse(resp) => {
-                Self::Other(format!("unexpected response status {}", resp.status()))
+            Err(e) => {
+                warn!("API error body did not match expected shape: {e}");
+                Self::api(status, "unknown", truncate_body(&raw))
             }
-            P::InvalidRequest(s) | P::PreHookError(s) | P::PostHookError(s) => Self::Other(s),
+        }
+    }
+
+    fn api(status: StatusCode, code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Api {
+            status: status.as_u16(),
+            code: code.into(),
+            message: message.into(),
         }
     }
 }
 
-fn extract_code_and_message<E: serde::Serialize>(body: &E) -> (String, String) {
-    let value = serde_json::to_value(body).unwrap_or(serde_json::Value::Null);
-    let code = value
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| {
-            warn!("API error body had no `name` field; falling back to \"unknown\". Body: {value}");
-            "unknown"
-        })
-        .to_string();
-    let message = value
-        .get("error")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
-        .unwrap_or_else(|| {
-            warn!("API error body had no `error` or `message` field; falling back to \"(no message)\"");
-            "(no message)"
-        })
-        .to_string();
-    (code, message)
+#[derive(serde::Deserialize)]
+struct ApiErrorBody {
+    name: String,
+    error: Option<String>,
+    message: Option<String>,
+}
+
+impl ApiErrorBody {
+    fn message(self) -> String {
+        self.error
+            .or(self.message)
+            .unwrap_or_else(|| "(no message)".to_string())
+    }
+}
+
+fn truncate_body(body: &str) -> String {
+    const LIMIT: usize = 512;
+    let mut truncated = String::new();
+    for (idx, ch) in body.char_indices() {
+        if idx >= LIMIT {
+            truncated.push_str("...");
+            return truncated;
+        }
+        truncated.push(ch);
+    }
+    truncated
 }
