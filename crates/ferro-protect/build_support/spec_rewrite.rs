@@ -133,9 +133,29 @@ fn drop_enum_with_collision_prone_variants(map: &mut serde_json::Map<String, ser
     }
 }
 
-/// Some Protect 6.2.x NVRs return `smoke_cmonx` for smart audio detection
-/// even though the 6.2.83 spec only lists `alrmCmonx`. Keep the field as a
-/// string so live responses remain readable across that spec/runtime drift.
+/// Real-world Protect NVRs return `smoke_cmonx` for smart audio detection
+/// even though the spec only lists `alrmCmonx`. The drift is persisted in
+/// the per-camera `smartDetectSettings.audioTypes` user-config field rather
+/// than in the `cameraFeatureFlags.smartDetectAudioTypes` capability list,
+/// which is why a quick `curl ... | jq '.[].featureFlags.smartDetectAudioTypes'`
+/// will *not* surface the problem -- you have to inspect
+/// `smartDetectSettings.audioTypes` (or just run the `live_read_cameras_list`
+/// integration test against your NVR, which is the authoritative check).
+///
+/// We can't simply rename `smoke_cmonx` to `alrmCmonx` on the wire because
+/// that's a user-set value the NVR round-trips on PATCH. Dropping the enum
+/// keeps the field a plain `String`, which serializes/deserializes whatever
+/// the NVR happens to use.
+///
+/// Confirmed still required against firmware 7.1.60 in 2026-05 (see
+/// PROGRESS.md "Investigated retiring drop_drifted_audio_detection_enum").
+/// If you want to retry retiring this rule on a future firmware: comment
+/// out the call site in `descend()`, run
+/// `cargo test --features dangerous-tls -p ferro-protect --test live live_read_cameras`
+/// against a real NVR, and check that no camera fails with
+/// `unknown variant 'smoke_cmonx'`. Look in the cameras of users who have
+/// historically configured smart-audio detection -- newly-added cameras
+/// may not exhibit the drift.
 fn drop_drifted_audio_detection_enum(map: &mut serde_json::Map<String, serde_json::Value>) {
     let Some(serde_json::Value::Array(values)) = map.get("enum") else {
         return;

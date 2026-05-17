@@ -449,8 +449,21 @@ and bakes a runtime-observed token into a "pure" pipeline.
 
 **Trigger to act.** Next spec bump that adds a second runtime-vs-spec
 enum drift case (so the cost of designing the right shape is
-amortised), OR the 7.1.60 bump (where the existing marker may stop
-matching, silently making the relaxation a no-op).
+amortised), OR a live integration test against a representative NVR
+(one whose owner has actually configured smart-audio detection at
+some point) passes with the rule disabled.
+
+Confirmed 2026-05 against firmware 7.1.60: rule still required. The
+drifted value `smoke_cmonx` is persisted in per-camera
+`smartDetectSettings.audioTypes` user config, *not* in the
+`cameraFeatureFlags.smartDetectAudioTypes` capability advertisement.
+The capability field has normalised to spec values in current
+firmware, but the user-config field round-trips whatever was
+originally written by older firmware. See PROGRESS.md entry
+"Investigated retiring drop_drifted_audio_detection_enum" for the
+full retirement experiment and what to look at next time. Do not
+trust a quick `curl ... | jq .featureFlags.smartDetectAudioTypes`
+check — it inspects the wrong field.
 
 **Two viable fix shapes.**
 
