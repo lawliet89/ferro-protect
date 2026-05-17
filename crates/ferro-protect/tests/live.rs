@@ -37,3 +37,50 @@ async fn live_read_info() {
         "live NVR returned an empty applicationVersion"
     );
 }
+
+#[tokio::test]
+async fn live_read_cameras_list() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_list: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    println!(
+        "live_read_cameras_list: {} camera(s) returned",
+        cameras.len()
+    );
+    for c in &cameras {
+        println!("  - {} {} state={}", c.id, c.name, c.state);
+    }
+}
+
+#[tokio::test]
+async fn live_read_cameras_get() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_get: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    let Some(first) = cameras.first() else {
+        println!("(skipping live_read_cameras_get: NVR has no cameras)");
+        return;
+    };
+    let fetched = client
+        .cameras()
+        .get(&first.id)
+        .await
+        .expect("cameras get call succeeded");
+    println!(
+        "live_read_cameras_get: round-tripped {} ({})",
+        fetched.id, fetched.name
+    );
+    assert_eq!(fetched.id, first.id, "list+get should agree on id");
+}

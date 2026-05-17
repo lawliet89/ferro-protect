@@ -8,7 +8,7 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use ferro_protect::{ProtectClient, TlsMode};
-use ferro_protect_cli::api_key;
+use ferro_protect_cli::{api_key, commands};
 
 /// Command-line interface for the UniFi Protect integration API.
 #[derive(Debug, Parser)]
@@ -59,6 +59,11 @@ struct Cli {
 enum Command {
     /// Show application info (running Protect version, etc.).
     Info,
+    /// Camera read endpoints.
+    Cameras {
+        #[command(subcommand)]
+        action: commands::cameras::Action,
+    },
 }
 
 #[tokio::main]
@@ -93,13 +98,14 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Info => {
             let info = client.info().await.context("info request failed")?;
-            if cli.json {
-                let json = serde_json::to_string_pretty(&info)?;
-                println!("{json}");
-            } else {
-                println!("Protect application version: {}", info.application_version);
-            }
+            ferro_protect_cli::output::emit_stdout(&info, cli.json, || {
+                format!(
+                    "Protect application version: {}\n",
+                    info.application_version
+                )
+            })?;
         }
+        Command::Cameras { action } => commands::cameras::run(&client, action, cli.json).await?,
     }
     Ok(())
 }

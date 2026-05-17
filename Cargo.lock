@@ -353,6 +353,7 @@ dependencies = [
  "ferro-protect",
  "predicates",
  "secrecy",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

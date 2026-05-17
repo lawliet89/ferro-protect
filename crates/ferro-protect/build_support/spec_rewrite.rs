@@ -275,7 +275,7 @@ fn drop_enum_with_collision_prone_variants(map: &mut serde_json::Map<String, ser
         let Some(s) = value.as_str() else {
             return;
         };
-        let sanitized: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let sanitized: String = s.chars().filter(char::is_ascii_alphanumeric).collect();
         if !seen.insert(sanitized) {
             map.remove("enum");
             return;

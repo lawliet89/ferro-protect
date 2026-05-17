@@ -1,0 +1,4 @@
+{
+  "name": "notFound",
+  "error": "Camera with id 'abc123' not found"
+}

@@ -36,7 +36,9 @@ pub enum TlsMode {
 /// instance across tasks.
 #[derive(Clone)]
 pub struct ProtectClient {
-    inner: Inner,
+    /// Crate-visible so per-entity API modules (`cameras.rs`, etc.) can
+    /// call generated methods. Never exposed beyond the crate.
+    pub(crate) inner: Inner,
 }
 
 impl ProtectClient {

@@ -6,3 +6,5 @@
 //! tests in `tests/`.
 
 pub mod api_key;
+pub mod commands;
+pub mod output;
