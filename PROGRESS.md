@@ -1,7 +1,8 @@
 # Build progress log
 
-Per PLAN.md, the entry for phase N is committed at the start of phase N+1, so
-this file traverses one phase behind the work in each commit it appears in.
+Entries are listed in chronological order, oldest first. Per PLAN.md, the
+entry for phase N is committed at the start of phase N+1, so this file
+traverses one phase behind the work in each commit it appears in.
 
 ## 2026-05-17 10:53 +0800 — Phase 0: workspace skeleton, lints, CI, submodule
 
@@ -38,51 +39,6 @@ public-API snapshot test.
   signing rule was honoured (no `--no-gpg-sign`).
 
 **Next**: Phase 1 — progenitor codegen pipeline.
-
-## 2026-05-17 11:20 +0800 — Chore: snapshot test for the spec rewrite pipeline
-
-**Status**: complete
-
-**Summary**:
-Implemented [docs/TASK_SNAPSHOT.md](docs/TASK_SNAPSHOT.md). Extracted the
-rewrite functions out of `build.rs` into
-`crates/ferro-protect/build_support/spec_rewrite.rs` behind a single
-`pub fn rewrite(serde_json::Value) -> serde_json::Value` entry point;
-`build.rs` now does `#[path = "build_support/spec_rewrite.rs"] mod
-spec_rewrite;` and calls `spec_rewrite::rewrite(raw)`. A new integration
-test at `crates/ferro-protect/tests/spec_rewrite_snapshot.rs` reads the
-pinned spec, runs it through `rewrite`, and asserts via
-`insta::assert_json_snapshot!`. The accepted snapshot
-(`tests/snapshots/spec_rewrite_snapshot__rewrite_output_matches_snapshot.snap`,
-5,590 lines) is committed. Added an "When the snapshot test fails" section
-to `UPGRADING.md`. All four gates pass.
-
-**Files added/changed**:
-- `crates/ferro-protect/build_support/spec_rewrite.rs` (new; moved logic)
-- `crates/ferro-protect/build.rs` (now thin, delegates to spec_rewrite)
-- `crates/ferro-protect/tests/spec_rewrite_snapshot.rs` (new test)
-- `crates/ferro-protect/tests/snapshots/spec_rewrite_snapshot__rewrite_output_matches_snapshot.snap` (new fixture)
-- `crates/ferro-protect/Cargo.toml` (insta + serde_json under [dev-dependencies])
-- `Cargo.toml` (workspace dep `insta = { version = "1", features = ["json"] }`)
-- `UPGRADING.md` (new section)
-- `.gitignore` (`**/*.snap.new`)
-
-**Decisions / deviations**:
-- Acceptance criterion: `$OUT_DIR/generated.rs` was byte-identical before
-  vs after the refactor. Verified via sha256sum (unchanged
-  `f6952d2f41b2579076d26eaf618c98a3f30cf57d44c0eb53dcb0f0a52ddd52a8`).
-- Acceptance criterion: tripwire works. Locally mutated
-  `*v = "3.0.3".to_string()` -> `"3.0.2"` in the rewrite module; the test
-  failed with a readable diff at the top-level `openapi` field. Reverted
-  and re-ran; back to green.
-- The task instructed to "append a PROGRESS.md entry" and commit it
-  together with the work, overriding PLAN.md's usual "PROGRESS.md lands in
-  the next phase's commit" rule. Following the task instruction.
-- Renamed the internal recursive helper (formerly named `rewrite`) to
-  `descend` because the public entry point now owns the `rewrite` name.
-
-**Next**: Phase 2 — info endpoint end-to-end + live-NVR integration test
-scaffold.
 
 ## 2026-05-17 11:05 +0800 — Phase 1: codegen pipeline
 
@@ -154,3 +110,128 @@ plus an agent-only checklist). All four gates pass.
 **Next**: Phase 2 — info endpoint end-to-end, plus a live-NVR integration
 test scaffold the user asked for (URL/API key supplied via env vars or a
 gitignored config file).
+
+## 2026-05-17 11:20 +0800 — Chore: snapshot test for the spec rewrite pipeline
+
+**Status**: complete
+
+**Summary**:
+Implemented [docs/TASK_SNAPSHOT.md](docs/TASK_SNAPSHOT.md). Extracted the
+rewrite functions out of `build.rs` into
+`crates/ferro-protect/build_support/spec_rewrite.rs` behind a single
+`pub fn rewrite(serde_json::Value) -> serde_json::Value` entry point;
+`build.rs` now does `#[path = "build_support/spec_rewrite.rs"] mod
+spec_rewrite;` and calls `spec_rewrite::rewrite(raw)`. A new integration
+test at `crates/ferro-protect/tests/spec_rewrite_snapshot.rs` reads the
+pinned spec, runs it through `rewrite`, and asserts via
+`insta::assert_json_snapshot!`. The accepted snapshot
+(`tests/snapshots/spec_rewrite_snapshot__rewrite_output_matches_snapshot.snap`,
+5,590 lines) is committed. Added an "When the snapshot test fails" section
+to `UPGRADING.md`. All four gates pass.
+
+**Files added/changed**:
+- `crates/ferro-protect/build_support/spec_rewrite.rs` (new; moved logic)
+- `crates/ferro-protect/build.rs` (now thin, delegates to spec_rewrite)
+- `crates/ferro-protect/tests/spec_rewrite_snapshot.rs` (new test)
+- `crates/ferro-protect/tests/snapshots/spec_rewrite_snapshot__rewrite_output_matches_snapshot.snap` (new fixture)
+- `crates/ferro-protect/Cargo.toml` (insta + serde_json under [dev-dependencies])
+- `Cargo.toml` (workspace dep `insta = { version = "1", features = ["json"] }`)
+- `UPGRADING.md` (new section)
+- `.gitignore` (`**/*.snap.new`)
+
+**Decisions / deviations**:
+- Acceptance criterion: `$OUT_DIR/generated.rs` was byte-identical before
+  vs after the refactor. Verified via sha256sum (unchanged
+  `f6952d2f41b2579076d26eaf618c98a3f30cf57d44c0eb53dcb0f0a52ddd52a8`).
+- Acceptance criterion: tripwire works. Locally mutated
+  `*v = "3.0.3".to_string()` -> `"3.0.2"` in the rewrite module; the test
+  failed with a readable diff at the top-level `openapi` field. Reverted
+  and re-ran; back to green.
+- The task instructed to "append a PROGRESS.md entry" and commit it
+  together with the work, overriding PLAN.md's usual "PROGRESS.md lands in
+  the next phase's commit" rule. Following the task instruction.
+- Renamed the internal recursive helper (formerly named `rewrite`) to
+  `descend` because the public entry point now owns the `rewrite` name.
+
+**Next**: Phase 2 — info endpoint end-to-end + live-NVR integration test
+scaffold.
+
+## 2026-05-17 11:55 +0800 — Phase 2: info endpoint end-to-end (library + CLI + live scaffold)
+
+**Status**: complete
+
+**Summary**:
+First real client slice. The library now wraps the progenitor-generated
+`Client` in a hand-written `ProtectClient` + builder, holds the API key in
+`secrecy::SecretString`, sends it via the `X-API-Key` default header, and
+exposes one method (`info()`) returning a re-exported `ApplicationInfo`.
+Errors from the generated layer pass through a single
+`Error::from_progenitor` adaptor that picks `name`/`error` out of any
+serialisable error body, so the same adaptor reuses across every endpoint
+in later phases. TLS modes: `Native` (default, webpki-roots), `Pinned(Vec<u8>)`
+(PEM), and `AcceptInvalid` behind a `dangerous-tls` cargo feature (the CLI
+enables this feature so `--insecure` works against self-signed NVRs).
+
+CLI is a clap-derive `Cli` struct with global args (`--host`, `--base-url`,
+`--api-key-file`, `--insecure`, `--json`) and an `Info` subcommand. Phase 2
+uses a temporary `--api-key <KEY>` flag (hidden in help, marked
+`// TODO: remove in phase 3`) so end-to-end tests work before the real
+loader lands.
+
+Tests:
+- `crates/ferro-protect/tests/info.rs` -- wiremock happy path (200 + JSON
+  fixture, asserts the `X-API-Key` header reaches the server) and 401
+  error path (asserts the mapped `Error::Api { status, code, message }`).
+- `crates/ferro-protect-cli/tests/info.rs` -- `assert_cmd` runs the
+  installed binary against a wiremock server in two flavors: default
+  human output, `--json` output. Wrapped in `tokio::task::spawn_blocking`
+  so the async runtime hosting wiremock doesn't deadlock on the
+  synchronous Command call.
+- `crates/ferro-protect/tests/live.rs` -- `#[ignore]`d live test against a
+  real NVR. Reads `FERRO_PROTECT_LIVE_HOST` + one of
+  `FERRO_PROTECT_LIVE_API_KEY_FILE` / `FERRO_PROTECT_LIVE_API_KEY`, plus
+  optional `FERRO_PROTECT_LIVE_INSECURE`. Names deliberately distinct
+  from the CLI's `UNIFI_PROTECT_*` envs so a developer's normal shell
+  cannot accidentally activate it. Runnable via `./scripts/live-test`
+  which sources `.env.local` (gitignored) and forwards to `cargo test
+  --test live -- --ignored --nocapture`. `.env.example` provided as a
+  template; `.env` and `.env.local` added to .gitignore.
+
+All four gates green: 4 ferro-protect tests + 2 ferro-protect-cli tests
++ 1 doc test + the snapshot test from the previous chore.
+
+**Files added/changed**:
+- `crates/ferro-protect/src/{error,auth,client,models}.rs` (new)
+- `crates/ferro-protect/src/lib.rs` (module declarations + re-exports + quickstart doctest)
+- `crates/ferro-protect/Cargo.toml` (secrecy + thiserror + tracing in deps; tokio + wiremock + secrecy in dev-deps; `dangerous-tls` feature)
+- `crates/ferro-protect/tests/{info.rs,live.rs}` and `tests/fixtures/info_*.json`
+- `crates/ferro-protect-cli/src/main.rs` (clap-derive CLI; temporary `--api-key` scaffold)
+- `crates/ferro-protect-cli/Cargo.toml` (forwards `dangerous-tls`; new dev-deps for assert_cmd / wiremock / predicates)
+- `crates/ferro-protect-cli/tests/info.rs` (e2e CLI test)
+- `scripts/live-test` (new; loads .env.local then runs the ignored live test)
+- `.env.example` (template), `.gitignore` (adds `.env` / `.env.local`)
+
+**Decisions / deviations**:
+- The integration scaffold the user asked for was promoted into a dedicated
+  test file + helper script + env-var contract rather than smuggled into
+  the regular wiremock test, so it stays opt-in and discoverable.
+- `--api-key <KEY>` flag is intentionally hidden (`hide = true` in clap)
+  and documented in code as a phase-3 removal target. The CLI tests use
+  it to exercise the e2e path before the smart loader lands.
+- `Error::from_progenitor` is generic over `E: Serialize` instead of
+  hard-binding to `GenericError`. Future endpoints with different error
+  schemas (e.g. `IdRequiredError`) reuse the same adaptor for free.
+- Did not promote `auth::ApiKey` to a public type even though clippy was
+  fine with it. Holding the raw secret behind the builder's `api_key()`
+  method keeps the public surface smaller and lets the secret never
+  escape the crate boundary.
+- CLI tests use `tokio::task::spawn_blocking` for `assert_cmd::Command`
+  because `assert_cmd` is blocking and runs `cargo build` if needed --
+  blocking the test's Tokio reactor would have deadlocked the wiremock
+  server living on the same runtime.
+- `secrecy = "0.10"` is in the workspace `[workspace.dependencies]` from
+  phase 0; in 0.10 the idiomatic construction is
+  `SecretString::from(String)`, which the code uses throughout.
+
+**Next**: Phase 3 -- smart API key loader (remove `--api-key`, add
+file + env-var sources with strict precedence, dedicated tests).

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Run the ferro-protect live integration test against your NVR.
+# Run the ferro-protect live integration tests against your NVR.
 #
-# Loads .env.local (gitignored) if present, then runs the tests gated
-# behind #[ignore = "live NVR ..."]. Pass any extra cargo test args after
-# the script name; they're forwarded.
+# Sources .env.local (gitignored) if present, then runs `cargo test --test
+# live -- --nocapture`. Live tests now auto-skip when the FERRO_PROTECT_LIVE_*
+# env vars are absent, so this script just plumbs your local config and
+# forwards arguments.
 #
-# See crates/ferro-protect/tests/live.rs for the required environment.
+# Mutating tests are gated separately by FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1.
+# See crates/ferro-protect/tests/common/mod.rs and PLAN.md "Testing strategy".
+#
+# Requires: bash (uses `set -a` / `source`).
 
 set -euo pipefail
 
@@ -25,4 +29,4 @@ if [[ -z "${FERRO_PROTECT_LIVE_HOST:-}" ]]; then
   exit 1
 fi
 
-exec cargo test -p ferro-protect --test live -- --ignored --nocapture "$@"
+exec cargo test --features dangerous-tls -p ferro-protect --test live -- --nocapture "$@"

@@ -1,80 +1,35 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::pedantic, clippy::nursery)]
 
-//! Live integration test. **Not** run by `cargo test` by default.
-//!
-//! Run with `./scripts/live-test` (which sources `.env.local` if present)
-//! or invoke directly:
+//! Live integration tests. Run as part of the normal `cargo test --all`
+//! suite -- when `FERRO_PROTECT_LIVE_HOST` is unset they early-return and
+//! count as `ok`. Configure the live environment via `.env.local` (see
+//! `.env.example` for the full var list) and run them with:
 //!
 //! ```sh
-//! cargo test -p ferro-protect --test live -- --ignored --nocapture
+//! ./scripts/live-test                # sources .env.local for you
+//! # -- or, manually --
+//! source .env.local && cargo test --all
 //! ```
 //!
-//! Required environment variables:
-//!
-//! - `FERRO_PROTECT_LIVE_HOST` -- the NVR host (e.g. `nvr.local` or
-//!   `10.0.0.5`). May include a port.
-//! - One of:
-//!     - `FERRO_PROTECT_LIVE_API_KEY_FILE` -- path to a file holding the
-//!       API key (trimmed). Preferred.
-//!     - `FERRO_PROTECT_LIVE_API_KEY` -- the raw key. Fine for shell env
-//!       vars; never commit this anywhere.
-//!
-//! Optional:
-//!
-//! - `FERRO_PROTECT_LIVE_INSECURE` -- set to any non-empty value to skip
-//!   TLS verification. Use only when your NVR ships a self-signed cert
-//!   you cannot pin.
-//!
-//! These names are deliberately distinct from the CLI's
-//! `UNIFI_PROTECT_*` env vars so a developer's normal shell environment
-//! does not silently flip these tests from ignored to active.
+//! Mutating tests (`live_write_*`) additionally require
+//! `FERRO_PROTECT_LIVE_ALLOW_MUTATIONS=1`. See PLAN.md "Testing strategy"
+//! for the contract.
 
-use ferro_protect::{ProtectClient, TlsMode};
-use secrecy::SecretString;
-
-const HOST_ENV: &str = "FERRO_PROTECT_LIVE_HOST";
-const KEY_FILE_ENV: &str = "FERRO_PROTECT_LIVE_API_KEY_FILE";
-const KEY_ENV: &str = "FERRO_PROTECT_LIVE_API_KEY";
-const INSECURE_ENV: &str = "FERRO_PROTECT_LIVE_INSECURE";
-
-fn config() -> (String, SecretString, bool) {
-    let host = std::env::var(HOST_ENV)
-        .unwrap_or_else(|_| panic!("missing {HOST_ENV} (live test requires real NVR host)"));
-
-    let key = if let Ok(path) = std::env::var(KEY_FILE_ENV) {
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("could not read {KEY_FILE_ENV}={path}: {e}"));
-        SecretString::from(raw.trim().to_string())
-    } else if let Ok(raw) = std::env::var(KEY_ENV) {
-        SecretString::from(raw)
-    } else {
-        panic!("set {KEY_FILE_ENV} (preferred) or {KEY_ENV}");
-    };
-
-    let insecure = std::env::var(INSECURE_ENV).is_ok_and(|v| !v.is_empty());
-    (host, key, insecure)
-}
-
-fn build_client() -> ProtectClient {
-    let (host, key, insecure) = config();
-    let mut builder = ProtectClient::builder().host(host).api_key(key);
-    if insecure {
-        builder = builder.tls(TlsMode::AcceptInvalid);
-    }
-    builder.build().expect("client builds with live config")
-}
+mod common;
 
 #[tokio::test]
-#[ignore = "live NVR -- opt in via scripts/live-test or --include-ignored"]
-async fn info_returns_real_version() {
-    let client = build_client();
+async fn live_read_info() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_info: FERRO_PROTECT_LIVE_HOST not set)");
+        return;
+    };
     let info = client
         .info()
         .await
         .expect("info call to real NVR succeeded");
     let version = info.application_version.to_string();
-    println!("Protect application version: {version}");
+    println!("live_read_info: Protect application version = {version}");
     assert!(
         !version.is_empty(),
         "live NVR returned an empty applicationVersion"
