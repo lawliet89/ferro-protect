@@ -106,7 +106,7 @@ All prefixed `FERRO_PROTECT_LIVE_` to make accidental activation impossible:
 
 | Var | Purpose |
 |---|---|
-| `FERRO_PROTECT_LIVE_HOST` | NVR hostname or IP. **Required.** Absence means all live tests skip. |
+| `FERRO_PROTECT_LIVE_HOST` | NVR hostname or `host:port` -- **no scheme prefix**. The client always wraps this as `https://{host}/proxy/protect/integration`. **Required.** Absence means all live tests skip. |
 | `FERRO_PROTECT_LIVE_API_KEY_FILE` | Path to a file containing the API key. **Preferred over the raw env var below.** |
 | `FERRO_PROTECT_LIVE_API_KEY` | Raw API key. Use only if the file form is impractical. |
 | `FERRO_PROTECT_LIVE_INSECURE` | Set to a non-empty value to accept self-signed TLS (common on home NVRs). |
