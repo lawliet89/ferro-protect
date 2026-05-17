@@ -85,15 +85,43 @@ fn sanitize_non_json_payloads(root: &mut serde_json::Map<String, serde_json::Val
                             content.insert("application/octet-stream".to_string(), image);
                         }
                     }
+                    // OpenAPI 3.0 requires `description` on every Response
+                    // object; some upstream specs (e.g. 7.1.60 POST
+                    // /v1/arm-profiles) ship 201 responses without one and
+                    // openapiv3 refuses to parse them. Inject a placeholder
+                    // so codegen proceeds; the value is never visible to
+                    // library consumers.
+                    resp_obj.entry("description").or_insert_with(|| {
+                        serde_json::Value::String("(no description in spec)".to_string())
+                    });
                 }
-                // The Protect spec uses `default` for the error response of every
-                // operation. Progenitor counts `default` as a possible success
-                // type and trips its "one success type" assertion. Rename to
-                // `4XX` (a valid 3.0 range) so progenitor classifies it as
-                // error-only and our `Error::Api` branch still gets the typed
-                // body via the generated error type.
-                if let Some(default_resp) = responses.remove("default") {
-                    responses.entry("4XX").or_insert(default_resp);
+                // The Protect spec uses `default` for the error response of
+                // most operations. Progenitor counts `default` as a possible
+                // success type and trips its "one success type" assertion,
+                // so we don't want to leave it as-is. Two cases:
+                //
+                // 1. Op has no explicit 4xx/5xx code: rename `default` to
+                //    `4XX` (valid 3.0 range) so progenitor classifies it as
+                //    error-only and our `Error::Api` branch still gets the
+                //    typed body.
+                //
+                // 2. Op already has an explicit 4xx/5xx code (new in 7.x):
+                //    drop `default` entirely. Keeping it would give the op
+                //    two different error body schemas in the same bucket,
+                //    which trips progenitor's
+                //    `response_types.len() <= 1` assertion. The hand-written
+                //    `Error::from_progenitor` adaptor handles unknown body
+                //    shapes anyway via its serde_json::Value probe.
+                if responses.contains_key("default") {
+                    let has_explicit_error = responses.keys().any(|k| {
+                        let bytes = k.as_bytes();
+                        !bytes.is_empty() && (bytes[0] == b'4' || bytes[0] == b'5')
+                    });
+                    if has_explicit_error {
+                        responses.remove("default");
+                    } else if let Some(default_resp) = responses.remove("default") {
+                        responses.entry("4XX").or_insert(default_resp);
+                    }
                 }
             }
         }
@@ -187,6 +215,7 @@ fn descend(value: &mut serde_json::Value) {
             collapse_nullable_combinator(map, "anyOf");
             flatten_singleton_all_of(map);
             strip_additional_properties_alongside_combinators(map);
+            drop_enum_with_collision_prone_variants(map);
             for v in map.values_mut() {
                 descend(v);
             }
@@ -224,6 +253,34 @@ fn flatten_singleton_all_of(map: &mut serde_json::Map<String, serde_json::Value>
     map.remove("allOf");
     map.remove("additionalProperties");
     map.insert("$ref".to_string(), serde_json::Value::String(ref_path));
+}
+
+/// Drop the `enum` constraint when two or more string values would sanitize
+/// to the same Rust identifier (typify panics with `Failed to make unique
+/// variant names`). Example: `["+", "-", "nc", "no", "com"]` -- both `+`
+/// and `-` strip down to the empty string and collide.
+///
+/// Detecting at the spec level lets the field become a plain `String` in
+/// generated code; we lose compile-time exhaustiveness but the field still
+/// round-trips whatever the NVR returns.
+fn drop_enum_with_collision_prone_variants(map: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(serde_json::Value::Array(values)) = map.get("enum") else {
+        return;
+    };
+    if map.get("type").and_then(|v| v.as_str()) != Some("string") {
+        return;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let Some(s) = value.as_str() else {
+            return;
+        };
+        let sanitized: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if !seen.insert(sanitized) {
+            map.remove("enum");
+            return;
+        }
+    }
 }
 
 /// Drop `additionalProperties: false` when the schema also uses a combinator
