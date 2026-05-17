@@ -286,8 +286,8 @@ script.
 transformations. Approved targets:
 
 - CLI `--help` text for the root command and each subcommand (phase
-  10).
-- Canonical, stable error message formatting (phase 10).
+  11).
+- Canonical, stable error message formatting (phase 11).
 - The OpenAPI rewrite pipeline output — *retired* when typify
   replaced progenitor; the smaller `tests/model_codegen.rs` covers
   the seam now.
@@ -333,7 +333,7 @@ one level removed from what we actually want to verify.
   docs and link out.
 - When adding a new top-level module or test pattern, update the
   file map in the same commit.
-- Phase 10's sweep verifies the document still matches reality
+- Phase 11's sweep verifies the document still matches reality
   before tagging 0.1.0.
 
 ## Working style

@@ -25,7 +25,7 @@ The seven invariants every phase must preserve (single `SPEC_VERSION`,
 live in [AGENT.md → Invariants you must preserve](AGENT.md#invariants-you-must-preserve).
 The forward-compatibility tooling those invariants imply
 (`scripts/update-spec`, [UPGRADING.md](UPGRADING.md), and the API
-surface snapshot test) is delivered in phase 1 and phase 10
+surface snapshot test) is delivered in phase 1 and phase 11
 respectively; see those phases for the concrete tasks.
 
 ---
@@ -61,8 +61,8 @@ respectively; see those phases for the concrete tasks.
 │   │   │   ├── error.rs
 │   │   │   ├── models.rs               # public type re-exports from generated
 │   │   │   ├── generated.rs            # includes $OUT_DIR/generated.rs
-│   │   │   ├── ws/                     # WebSocket layer (phase 9)
-│   │   │   └── media.rs                # binary endpoints (phase 7)
+│   │   │   ├── ws/                     # WebSocket layer (phase 7)
+│   │   │   └── media.rs                # binary endpoints (phase 5)
 │   │   └── tests/
 │   │       ├── common/                 # shared helpers (live_client, etc.)
 │   │       ├── fixtures/               # canned JSON for wiremock tests
@@ -291,9 +291,57 @@ By the end of phase 4 the library has roughly 14 typed methods and the CLI is a 
 
 ---
 
-## Phase 5 — Mutating CRUD: PATCH and POST
+## Phase 5 — Binary endpoints
 
-**Goal**: configuration changes via PATCH and creates via POST, in order of increasing impact.
+**Goal**: snapshots, stream URLs, talkback session info. All reads; safe
+to run without the mutation gate.
+
+1. `cameras snapshot <id>` — returns `Bytes` in the library. CLI writes to `--out <PATH>`, to stdout if not a TTY, errors with friendly message if stdout is a TTY and no `--out`. Use the `is-terminal` crate. This endpoint uses the shared raw-bytes HTTP helper.
+2. `cameras rtsps <id>` — returns the RTSPS URL as a string. Trivial.
+3. `cameras talkback <id>` — returns the WebSocket URL and codec metadata. Library exposes the structured info, CLI prints it. Out of scope: actual audio piping.
+
+All three have `live_read_*` tests (calling them does not change NVR state). The snapshot live test asserts the body is non-empty and starts with the JPEG magic bytes (`FF D8 FF`); do not snapshot-test the bytes themselves. One commit per endpoint or one combined — your call. Log the decision.
+
+---
+
+## Phase 6 — Files: list (read)
+
+**Goal**: read half of file management (ringtones etc.). The upload
+half is deliberately deferred to phase 10 — see the "all mutations at
+the end" reorganisation note in the project history. Splitting Files
+across two phases means the CLI `files` namespace exists from phase 6
+onward but only gains its `upload` subcommand in phase 10.
+
+1. `GET /v1/files/{fileType}` — list files of a type. `live_read_files_list`.
+
+CLI: `ferro-protect files list <fileType>`. One commit.
+
+---
+
+## Phase 7 — WebSocket subscriptions
+
+**Goal**: streaming read endpoints. Last of the read phases because
+they're the highest-risk read surface (long-lived connections, framing
+quirks).
+
+1. **First**: `/v1/subscribe/devices`. Implement hand-written using `tokio-tungstenite`. WS URL is `wss://{host}/proxy/protect/integration/v1/subscribe/devices`. Pass `X-API-Key` as a handshake header. Returns `impl Stream<Item = Result<DeviceMessage>>` where `DeviceMessage` is a serde-tagged enum matching the spec's `oneOf { add, update, remove }` discriminator. CLI: `ferro-protect subscribe devices` streams NDJSON to stdout (one JSON object per line). Commit.
+2. **Then**: `/v1/subscribe/events` — same pattern, different message type. Commit.
+3. **Optional reconnection helper**: behind a `reconnect` cargo feature on the library and a `--reconnect` flag on the CLI. Exponential backoff 8s → 120s, configurable max attempts. Commit.
+
+Live tests: `live_read_subscribe_devices` and `live_read_subscribe_events`. Both
+connect, wait up to a short timeout (5s) for either the first message or a
+clean idle confirmation, assert the connection handshake succeeded, then
+disconnect cleanly. Do **not** assert on message content — different NVRs
+produce different activity, and a test waiting for a motion event would flap
+forever on a quiet NVR. The handshake itself is the assertion.
+
+If the WebSocket framing turns out to differ from straight JSON-over-WS (it has historically on Protect's private API), log the discovery and document the framing in code comments.
+
+---
+
+## Phase 8 — Mutating CRUD: PATCH and POST
+
+**Goal**: configuration changes via PATCH and creates via POST, in order of increasing impact. First of the mutation phases.
 
 > Note: the retry middleware added before phase 5 deliberately does **not** retry POST/PATCH/DELETE by default ([`ProtectClientBuilder::retry_on_mutations`](crates/ferro-protect/src/client.rs)). A 5xx after the server has already applied the change must not silently re-fire. Tests that intentionally exercise mutation retries should opt in explicitly.
 
@@ -333,7 +381,7 @@ Commit after each entity.
 
 ---
 
-## Phase 6 — Action endpoints
+## Phase 9 — Action endpoints
 
 **Goal**: the "do a thing" POSTs.
 
@@ -349,50 +397,20 @@ These are simple — no body shape complexity. One commit covering all action en
 
 ---
 
-## Phase 7 — Binary endpoints
+## Phase 10 — Files: upload (mutation)
 
-**Goal**: snapshots, stream URLs, talkback session info.
+**Goal**: upload half of file management. The read half landed in
+phase 6.
 
-1. `cameras snapshot <id>` — returns `Bytes` in the library. CLI writes to `--out <PATH>`, to stdout if not a TTY, errors with friendly message if stdout is a TTY and no `--out`. Use the `is-terminal` crate. This endpoint uses the shared raw-bytes HTTP helper.
-2. `cameras rtsps <id>` — returns the RTSPS URL as a string. Trivial.
-3. `cameras talkback <id>` — returns the WebSocket URL and codec metadata. Library exposes the structured info, CLI prints it. Out of scope: actual audio piping.
-
-All three have `live_read_*` tests (calling them does not change NVR state). The snapshot live test asserts the body is non-empty and starts with the JPEG magic bytes (`FF D8 FF`); do not snapshot-test the bytes themselves. One commit per endpoint or one combined — your call. Log the decision.
-
----
-
-## Phase 8 — Files endpoint
-
-**Goal**: ringtone and similar file management.
-
-1. `GET /v1/files/{fileType}` — list files of a type. `live_read_files_list`.
-2. `POST /v1/files/{fileType}` — multipart upload. `live_write_files_upload`
+1. `POST /v1/files/{fileType}` — multipart upload. `live_write_files_upload`
    (gated by `common::mutations_allowed()`).
 
-CLI: `ferro-protect files list <fileType>`, `ferro-protect files upload <fileType> <PATH>`. One commit.
+CLI: `ferro-protect files upload <fileType> <PATH>` — adds an `upload`
+subcommand to the existing `files` namespace from phase 6. One commit.
 
 ---
 
-## Phase 9 — WebSocket subscriptions
-
-**Goal**: streaming endpoints. Last because they're the highest-risk.
-
-1. **First**: `/v1/subscribe/devices`. Implement hand-written using `tokio-tungstenite`. WS URL is `wss://{host}/proxy/protect/integration/v1/subscribe/devices`. Pass `X-API-Key` as a handshake header. Returns `impl Stream<Item = Result<DeviceMessage>>` where `DeviceMessage` is a serde-tagged enum matching the spec's `oneOf { add, update, remove }` discriminator. CLI: `ferro-protect subscribe devices` streams NDJSON to stdout (one JSON object per line). Commit.
-2. **Then**: `/v1/subscribe/events` — same pattern, different message type. Commit.
-3. **Optional reconnection helper**: behind a `reconnect` cargo feature on the library and a `--reconnect` flag on the CLI. Exponential backoff 8s → 120s, configurable max attempts. Commit.
-
-Live tests: `live_read_subscribe_devices` and `live_read_subscribe_events`. Both
-connect, wait up to a short timeout (5s) for either the first message or a
-clean idle confirmation, assert the connection handshake succeeded, then
-disconnect cleanly. Do **not** assert on message content — different NVRs
-produce different activity, and a test waiting for a motion event would flap
-forever on a quiet NVR. The handshake itself is the assertion.
-
-If the WebSocket framing turns out to differ from straight JSON-over-WS (it has historically on Protect's private API), log the discovery and document the framing in code comments.
-
----
-
-## Phase 10 — Polish and release prep
+## Phase 11 — Polish and release prep
 
 1. Audit library docs: top-level rustdoc with a quickstart example. Every public item has a doc comment.
 2. Audit CLI `--help`: subcommands grouped sensibly, all flags have help text.
@@ -407,7 +425,7 @@ If the WebSocket framing turns out to differ from straight JSON-over-WS (it has 
 11. Sweep `ARCHITECTURE.md`: re-read it as if you'd never seen the code, fix any drift, ensure the file map matches the on-disk layout, and confirm every invariant it claims is still enforced.
 12. Tag the commit `v0.1.0`.
 
-**Commit message**: `phase(10): docs, polish, release 0.1.0`
+**Commit message**: `phase(11): docs, polish, release 0.1.0`
 
 ---
 
