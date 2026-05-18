@@ -1,8 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(
-    clippy::doc_markdown,
-    reason = "doc strings reference snake_case identifiers and bare URLs"
-)]
 
 //! Library half of the `ferro-protect` CLI. Exists so the API-key
 //! resolver and other CLI internals can be unit-tested by integration

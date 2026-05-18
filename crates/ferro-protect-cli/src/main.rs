@@ -1,8 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(
-    clippy::doc_markdown,
-    reason = "doc strings reference snake_case identifiers and bare URLs"
-)]
 
 //! `ferro-protect` -- command-line tool for the UniFi Protect local
 //! integration API. Doubles as a living integration test for the
