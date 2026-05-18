@@ -21,6 +21,11 @@ insecure-tls = []
 
 [dependencies]
 reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+async-trait = { workspace = true }
+http = { workspace = true }
+rand = { workspace = true }
+governor = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -28,6 +33,7 @@ secrecy = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 url = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
 
 [build-dependencies]
 serde_json = { workspace = true }
@@ -39,6 +45,6 @@ prettyplease = { workspace = true }
 [dev-dependencies]
 insta = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 wiremock = { workspace = true }
 secrecy = { workspace = true }

@@ -343,6 +343,8 @@ If the WebSocket framing turns out to differ from straight JSON-over-WS (it has 
 
 **Goal**: configuration changes via PATCH and creates via POST, in order of increasing impact. First of the mutation phases.
 
+> Note: the retry middleware deliberately does **not** retry POST/PATCH/DELETE by default ([`ProtectClientBuilder::retry_on_mutations`](crates/ferro-protect/src/client.rs)). A 5xx after the server has already applied the change must not silently re-fire. Tests that intentionally exercise mutation retries should opt in explicitly.
+
 Order (one commit per entity):
 
 1. `viewers patch <id>` (rename, change attached liveview — lowest blast radius).
@@ -501,6 +503,39 @@ check — it inspects the wrong field.
 
 Default recommendation when the trigger fires: option 1, unless other
 hand-written wrappers have appeared in the meantime.
+
+### Replace wall-clock waits in rate-limit integration tests
+
+**Symptom.** [crates/ferro-protect/tests/rate_limit.rs](crates/ferro-protect/tests/rate_limit.rs)
+uses wall-clock `std::time::Instant` assertions and real sleeps for
+the Retry-After-honour, burst-throttle, and middleware-ordering tests,
+costing ~2s of suite wall time and exposing the tests to flake under
+CI contention.
+
+**Trigger to act.** Either of: the tests start flaking on CI (look
+for "expected ~Xms, got" timing assertion failures); a future rewrite
+needs to assert behaviour at higher window counts where real time
+would dominate the suite; or the rate-limit module grows enough
+mocked-integration tests that the cumulative wall-time matters.
+
+**Fix shape, when adopted.** The proactive throttle is `governor`'s
+GCRA limiter configured with `DefaultClock` (which falls back to
+`MonotonicClock` because the `quanta` feature is off) — both back onto
+`std::time::Instant`. Tokio's `start_paused = true` only virtualises
+`tokio::time`, so it cannot fake the limiter's clock. A custom
+`governor::Clock` impl wired through `RateLimitMiddleware` (driven by
+a `tokio::time::Instant` source under test, real `Instant` in prod)
+would let paused-time tests cover both the retry sleep *and* the
+limiter pacing in one fake-clock domain. `wiremock` still runs its
+HTTP server in real time, so the design must keep the paused window
+around the *client-side* waits only, not the round-trip.
+
+Originally raised in [PR #6 review](https://github.com/lawliet89/ferro-protect/pull/6#discussion_r3254525890);
+deferred there because the savings (~1–2s of suite time, once per
+run) do not justify the custom-clock plumbing today. The
+[`tokio::spawn`-per-permit](https://github.com/lawliet89/ferro-protect/pull/6#discussion_r3254525885)
+concern flagged in the same review was eliminated by the governor
+rewrite in PR #8 — there is no per-permit task to remove anymore.
 
 ---
 

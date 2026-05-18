@@ -47,6 +47,13 @@ pub fn live_client() -> Option<ProtectClient> {
 
     let insecure = parse_boolish_env(INSECURE_ENV);
 
+    #[cfg_attr(
+        not(feature = "insecure-tls"),
+        expect(
+            unused_mut,
+            reason = "the `mut` is only consumed under the insecure-tls cfg branch below"
+        )
+    )]
     let mut builder = ProtectClient::builder().host(host).api_key(key);
     if insecure {
         #[cfg(feature = "insecure-tls")]

@@ -193,11 +193,14 @@ The current state. Updated whenever the structure changes.
 | [src/error.rs](crates/ferro-protect/src/error.rs) | `Error` enum + `Result` alias. Non-2xx responses are mapped from `{ name, error/message }` bodies with a raw-body fallback. |
 | [src/auth.rs](crates/ferro-protect/src/auth.rs) | `ApiKey(SecretString)` wrapper. `API_KEY_HEADER` constant. |
 | [src/models.rs](crates/ferro-protect/src/models.rs) | **The seam.** Public re-exports from generated model types plus tiny hand-written inline response models. |
-| [src/client.rs](crates/ferro-protect/src/client.rs) | `ProtectClient`, `ProtectClientBuilder`, `TlsMode`. The user-facing surface. |
+| [src/client.rs](crates/ferro-protect/src/client.rs) | `ProtectClient`, `ProtectClientBuilder`, `TlsMode`, `RetryConfig`. The user-facing surface. Holds two `ClientWithMiddleware` instances (one for reads, one for writes) so retry can apply to GETs by default without re-running mutations. |
+| [src/rate_limit.rs](crates/ferro-protect/src/rate_limit.rs) | `RateLimitConfig` (public) + `RateLimitMiddleware` (internal). [`governor`](https://crates.io/crates/governor)-backed GCRA (leaky bucket) pinned to a fixed `rate / per` quota; defaults to `10-in-1sec` matching Protect 7.1.60. No runtime adaptation -- if Protect ever bumps its advertised quota, bump `rate` in the builder. |
+| [src/retry.rs](crates/ferro-protect/src/retry.rs) | `RetryAfterAwareMiddleware`. Custom `reqwest-middleware` that retries 429/5xx/timeouts, honouring `Retry-After` when the server sets it (Protect returns `retry-after: 1` on 429). Falls back to exponential backoff with jitter. |
 | [src/generated.rs](crates/ferro-protect/src/generated.rs) | A permissive `#![allow(...)]` block and `include!(concat!(env!("OUT_DIR"), "/generated.rs"))`. Declared as a private `mod generated;` in `lib.rs`; only `models.rs` re-exports from it. |
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
 | [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
+| [tests/rate_limit.rs](crates/ferro-protect/tests/rate_limit.rs) | Mocked integration test for the retry middleware (Retry-After honoured, retry budget exhaustion) and proactive throttle (burst capped to configured capacity). |
 | [tests/live.rs](crates/ferro-protect/tests/live.rs) | Live tests against a real NVR. Auto-skip when env absent. |
 | [tests/common/mod.rs](crates/ferro-protect/tests/common/mod.rs) | `live_client() -> Option<ProtectClient>`, `mutations_allowed() -> bool`. Pulled in by each live test via `mod common;`. |
 | [tests/model_codegen.rs](crates/ferro-protect/tests/model_codegen.rs) | Smoke test for generated-model re-exports and inline response models. |
@@ -265,6 +268,48 @@ Three TLS modes ([`TlsMode`](crates/ferro-protect/src/client.rs)):
 - `AcceptInvalid` — disables verification entirely. Gated behind the
   `insecure-tls` cargo feature. The CLI enables this feature so
   `--insecure` works; library consumers must opt in.
+
+---
+
+## Rate limiting and retries
+
+The UniFi Protect server advertises an RFC 9331 `RateLimit-Policy`
+header on every response (Protect 7.1.60: `10-in-1sec`, i.e. 10
+requests per rolling 1-second window). The client pins its proactive
+limiter to that quota and honours the per-response `Retry-After` hint,
+so the README's `cargo test --all` works against a real NVR under
+default `cargo test` parallelism without `--test-threads=1`.
+
+Two cooperating layers, both **on by default**:
+
+1. **Proactive throttle** ([`rate_limit::RateLimitMiddleware`](crates/ferro-protect/src/rate_limit.rs)).
+   A [`governor`](https://crates.io/crates/governor)-backed GCRA
+   (leaky-bucket) limiter pinned to `RateLimitConfig { rate, per }`
+   (default `10 / 1s`). Burst size equals `rate`, so the first `rate`
+   requests fire immediately, then subsequent requests are paced one
+   per `per / rate`. The advertised `RateLimit-Policy` header is **not**
+   observed at runtime -- Protect's quota has been stable across
+   firmware, and if it ever moves the fix is a one-line builder edit.
+   The CLI never sees this — it's a library-internal helper applied to
+   every shared HTTP method (`get_json`, `post_json`, …) via
+   `reqwest-middleware`.
+
+2. **Retry middleware** ([`retry::RetryAfterAwareMiddleware`](crates/ferro-protect/src/retry.rs)).
+   Wraps the inner `reqwest::Client` via `reqwest-middleware`. Retries
+   429 (honouring `Retry-After`), 5xx, 408, and connect/read
+   timeouts, with exponential backoff + jitter when the server gives
+   no hint. Bounded by `RetryConfig::max_retries` (default 3). The
+   `ProtectClient` holds two middleware clients: `http_read` always
+   wraps the retry layer; `http_write` only wraps it when
+   `ProtectClientBuilder::retry_on_mutations(true)` was called, so a
+   non-idempotent POST after a 5xx isn't silently re-applied.
+
+The retry library `reqwest-retry` was rejected during implementation
+because it ignores `Retry-After` — its built-in
+`RetryTransientMiddleware` uses its own exponential schedule
+regardless of what the server says. The custom middleware in
+`retry.rs` is small (~120 lines) and means we read the server's
+`retry-after: 1` and actually wait 1s.
 
 ---
 
