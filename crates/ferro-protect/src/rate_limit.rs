@@ -1,174 +1,103 @@
-//! Adaptive client-side rate limiter driven by the NVR's RFC 9331
-//! `RateLimit` / `RateLimit-Policy` response headers.
+//! Proactive client-side rate limiter backed by [`governor`].
 //!
-//! The UniFi Protect integration server enforces a per-window quota and
-//! advertises it on every response (`RateLimit-Policy: "10-in-1sec";
-//! q=10; w=1`). The limiter parses those headers and uses a
-//! [`Semaphore`] sized to the advertised quota so the in-process client
-//! never exceeds the server's published budget. Each permit is
-//! auto-released after `window`, giving a sliding-window approximation
-//! that matches the server's leaky-bucket semantics in the common case.
+//! UniFi Protect advertises its quota via RFC 9331
+//! `RateLimit-Policy: "10-in-1sec"; q=10; w=1`. We pin the client to a
+//! matching fixed quota (10 requests / 1 second by default, with burst=10)
+//! so a tight loop of reads cannot overrun the server's leaky-bucket
+//! budget and trip a 429. The retry middleware
+//! ([`crate::retry::RetryAfterAwareMiddleware`]) still recovers from any
+//! 429 that does slip through.
 //!
-//! On a permit acquisition the helper sends the request; on response,
-//! the limiter [`observe`](AdaptiveLimiter::observe)s the headers and
-//! grows capacity if the server now advertises a larger quota. Shrinks
-//! are logged at `warn!` but not applied -- mutating a live semaphore
-//! downward is unsound (we can't reclaim permits already handed out
-//! without risking deadlock against in-flight requests). In practice
-//! Protect never tightens its policy mid-session.
+//! [`governor`] implements GCRA (a leaky-bucket variant) over a single
+//! atomic state cell -- no spawned timers, no shrink-vs-deadlock corner
+//! cases. If Protect ever raises its advertised quota, bump
+//! [`RateLimitConfig::rate`] in the builder; we deliberately do not
+//! auto-track the `RateLimit-Policy` header because the advertised value
+//! has been stable across observed firmware versions and the runtime
+//! re-tuning machinery is not worth the surface area.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use governor::clock::DefaultClock;
+use governor::middleware::NoOpMiddleware;
+use governor::state::{InMemoryState, NotKeyed};
+use governor::{Quota, RateLimiter};
 use http::Extensions;
-use log::{debug, info, warn};
-use reqwest::header::HeaderMap;
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
-use tokio::sync::Semaphore;
+
+use crate::error::{Error, Result};
+
+type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
 
 /// Public knobs for the proactive rate limiter.
 ///
-/// The defaults match the policy Protect 7.1.60 currently advertises
-/// (`10-in-1sec`); the limiter still self-adjusts upward if a future
-/// firmware raises the quota.
+/// Defaults match Protect 7.1.60's advertised policy (`10-in-1sec`).
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
-    /// Maximum number of requests that may *start* within any rolling
-    /// `window`. This is a per-window quota, not a concurrency cap --
-    /// permits are released on a timer (see [`AdaptiveLimiter::acquire`])
-    /// independent of when the request actually completes, matching the
-    /// server's leaky-bucket semantics.
-    pub initial_capacity: u32,
-    /// Window over which `initial_capacity` requests are allowed.
-    pub window: Duration,
+    /// Target steady-state rate (`rate` requests every `per`) and max burst
+    /// size. The bucket starts full, so up to `rate` requests can fire
+    /// immediately before refill pacing kicks in.
+    pub rate: NonZeroU32,
+    /// Refill interval associated with [`Self::rate`] (used as `per / rate`
+    /// between token refills), not a strict rolling-window cap.
+    pub per: Duration,
 }
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            initial_capacity: 10,
-            window: Duration::from_secs(1),
+            rate: NonZeroU32::new(10).expect("10 is non-zero"),
+            per: Duration::from_secs(1),
         }
     }
 }
 
-#[derive(Clone)]
-#[expect(
-    clippy::redundant_pub_crate,
-    reason = "pub(crate) needed for cross-module access within the crate"
-)]
-pub(crate) struct AdaptiveLimiter {
-    inner: Arc<Inner>,
-}
-
-struct Inner {
-    capacity: AtomicU32,
-    window_millis: AtomicU64,
-    semaphore: Arc<Semaphore>,
-}
-
-impl AdaptiveLimiter {
-    pub(crate) fn new(config: &RateLimitConfig) -> Self {
-        let capacity = config.initial_capacity.max(1);
-        let semaphore = Arc::new(Semaphore::new(capacity as usize));
-        let window_millis = u64::try_from(config.window.as_millis()).unwrap_or(u64::MAX);
-        Self {
-            inner: Arc::new(Inner {
-                capacity: AtomicU32::new(capacity),
-                window_millis: AtomicU64::new(window_millis),
-                semaphore,
-            }),
-        }
-    }
-
-    /// Acquire a slot in the current window. Blocks (asynchronously) if
-    /// the budget is exhausted. The permit auto-releases after `window`
-    /// elapses from this acquisition, regardless of how long the
-    /// caller's request takes -- this matches the server's
-    /// "N requests per rolling window" semantics rather than
-    /// "N concurrent requests."
-    pub(crate) async fn acquire(&self) {
-        let permit = Arc::clone(&self.inner.semaphore)
-            .acquire_owned()
-            .await
-            .expect("rate-limit semaphore is never closed");
-        let window = Duration::from_millis(self.inner.window_millis.load(Ordering::Acquire));
-        // One short-lived release task per acquired permit. At Protect's
-        // 10/sec budget this is at most ~10 tasks/sec of overhead and
-        // matches the sliding-window semantics naturally. A shared
-        // refill loop would be lower overhead at very high RPS but the
-        // server's quota is the upper bound — we're not in that regime.
-        tokio::spawn(async move {
-            tokio::time::sleep(window).await;
-            drop(permit);
-        });
-    }
-
-    /// Parse RFC 9331 `RateLimit-Policy` from a response and grow the
-    /// budget if the server now advertises a larger quota. No-op when
-    /// headers are absent or unparseable.
+impl RateLimitConfig {
+    /// Convert into a `governor::Quota`.
     ///
-    /// **Window-change caveat:** if the server changes its window duration
-    /// (`w`), any permits that were already acquired will still be released
-    /// after the old window duration. The new window only takes effect for
-    /// permits acquired *after* this call. In the short-term this can cause
-    /// a slight deviation from the new policy window, but in practice
-    /// Protect never changes its window mid-session.
-    pub(crate) fn observe(&self, headers: &HeaderMap) {
-        let Some(policy) = parse_ratelimit_policy(headers) else {
-            return;
-        };
-
-        let new_window_millis = u64::from(policy.window_seconds).saturating_mul(1000);
-        let prev_window_millis = self
-            .inner
-            .window_millis
-            .swap(new_window_millis, Ordering::AcqRel);
-        if prev_window_millis != new_window_millis {
-            debug!("rate-limit window adjusted: {prev_window_millis}ms -> {new_window_millis}ms");
-        }
-
-        let prev_capacity = self.inner.capacity.load(Ordering::Acquire);
-        if policy.quota == prev_capacity {
-            return;
-        }
-        if policy.quota > prev_capacity {
-            let delta = policy.quota - prev_capacity;
-            self.inner.semaphore.add_permits(delta as usize);
-            self.inner.capacity.store(policy.quota, Ordering::Release);
-            info!(
-                "rate-limit capacity increased from server policy: {prev_capacity} -> {}",
-                policy.quota
-            );
-        } else {
-            warn!(
-                "server now advertises tighter rate limit ({}/{}ms) than client tracks ({prev_capacity}); not shrinking semaphore to avoid deadlock against in-flight requests",
-                policy.quota, new_window_millis,
-            );
-        }
+    /// # Errors
+    /// Returns [`Error::Other`] when the per-cell refill period
+    /// (`per / rate`) rounds down to zero — i.e. when `per` is
+    /// [`Duration::ZERO`] or when `per` in nanoseconds is smaller than
+    /// `rate`. Both are pathological configurations (sub-nanosecond pacing)
+    /// surfaced as a builder error rather than a panic.
+    fn quota(&self) -> Result<Quota> {
+        // `Quota::with_period` takes the period *between* cell refills,
+        // i.e. `per / rate`. `allow_burst` then sets the bucket depth.
+        // `Duration::checked_div` only returns `None` for a zero divisor,
+        // which `NonZeroU32` rules out -- so we just divide. `with_period`
+        // is the real fallible step: it rejects a zero period.
+        let cell_period = self.per / self.rate.get();
+        Quota::with_period(cell_period)
+            .map(|q| q.allow_burst(self.rate))
+            .ok_or_else(|| {
+                Error::Other(format!(
+                    "rate-limit config rejected: rate={} per={:?} yields zero refill period",
+                    self.rate, self.per
+                ))
+            })
     }
 }
 
-/// `reqwest-middleware` layer that enforces the proactive rate limit.
-///
-/// Stacked *inside* [`RetryAfterAwareMiddleware`](crate::retry::RetryAfterAwareMiddleware)
-/// so that every retry attempt — not just the first — must acquire a slot
-/// before the request is sent. This prevents a burst of transient failures
-/// from consuming more of the server's quota than the sliding-window budget
-/// allows.
-///
-/// After each attempt the response headers are fed to
-/// [`AdaptiveLimiter::observe`] so the limiter can grow its capacity if
-/// the server advertises a larger quota.
 #[expect(
     clippy::redundant_pub_crate,
     reason = "pub(crate) needed for cross-module access within the crate"
 )]
+#[derive(Clone)]
 pub(crate) struct RateLimitMiddleware {
-    pub(crate) limiter: AdaptiveLimiter,
+    limiter: Arc<DirectLimiter>,
+}
+
+impl RateLimitMiddleware {
+    pub(crate) fn new(config: &RateLimitConfig) -> Result<Self> {
+        Ok(Self {
+            limiter: Arc::new(RateLimiter::direct(config.quota()?)),
+        })
+    }
 }
 
 #[async_trait]
@@ -179,151 +108,13 @@ impl Middleware for RateLimitMiddleware {
         extensions: &mut Extensions,
         next: Next<'_>,
     ) -> reqwest_middleware::Result<Response> {
-        self.limiter.acquire().await;
-        let response = next.run(req, extensions).await;
-        if let Ok(ref resp) = response {
-            self.limiter.observe(resp.headers());
-        }
-        response
+        self.limiter.until_ready().await;
+        next.run(req, extensions).await
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct RateLimitPolicy {
-    quota: u32,
-    window_seconds: u32,
-}
-
-fn parse_ratelimit_policy(headers: &HeaderMap) -> Option<RateLimitPolicy> {
-    let raw = headers.get("ratelimit-policy")?.to_str().ok()?;
-    let mut quota: Option<u32> = None;
-    let mut window_seconds: Option<u32> = None;
-    for token in raw.split(';') {
-        let trimmed = token.trim();
-        if let Some(v) = trimmed.strip_prefix("q=") {
-            quota = v.trim().parse().ok();
-        } else if let Some(v) = trimmed.strip_prefix("w=") {
-            window_seconds = v.trim().parse().ok();
-        }
-    }
-    Some(RateLimitPolicy {
-        quota: quota?,
-        window_seconds: window_seconds?,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use reqwest::header::{HeaderMap, HeaderValue};
-
-    fn hdrs(value: &str) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        h.insert("ratelimit-policy", HeaderValue::from_str(value).unwrap());
-        h
-    }
-
-    #[test]
-    fn parses_observed_protect_policy() {
-        let h = hdrs(r#""10-in-1sec"; q=10; w=1; pk=:abc:"#);
-        let parsed = parse_ratelimit_policy(&h).unwrap();
-        assert_eq!(
-            parsed,
-            RateLimitPolicy {
-                quota: 10,
-                window_seconds: 1
-            }
-        );
-    }
-
-    #[test]
-    fn parse_missing_header_returns_none() {
-        assert!(parse_ratelimit_policy(&HeaderMap::new()).is_none());
-    }
-
-    #[test]
-    fn parse_garbage_returns_none() {
-        let mut h = HeaderMap::new();
-        h.insert(
-            "ratelimit-policy",
-            HeaderValue::from_static("not a policy at all"),
-        );
-        assert!(parse_ratelimit_policy(&h).is_none());
-    }
-
-    #[test]
-    fn parse_partial_returns_none() {
-        let h = hdrs("q=10");
-        assert!(parse_ratelimit_policy(&h).is_none());
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn acquire_blocks_when_budget_exhausted() {
-        let limiter = AdaptiveLimiter::new(&RateLimitConfig {
-            initial_capacity: 2,
-            window: Duration::from_secs(1),
-        });
-        limiter.acquire().await;
-        limiter.acquire().await;
-
-        // Third acquire should block until a permit auto-releases (~1s).
-        let start = tokio::time::Instant::now();
-        limiter.acquire().await;
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed >= Duration::from_millis(900),
-            "expected ~1s block, got {elapsed:?}"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn observe_grows_capacity() {
-        let limiter = AdaptiveLimiter::new(&RateLimitConfig {
-            initial_capacity: 2,
-            window: Duration::from_secs(1),
-        });
-        limiter.acquire().await;
-        limiter.acquire().await;
-
-        // Server advertises larger quota -- limiter should add permits.
-        limiter.observe(&hdrs(r#""5-in-1sec"; q=5; w=1"#));
-
-        // We can now acquire 3 more immediately without blocking.
-        for _ in 0..3 {
-            tokio::time::timeout(Duration::from_millis(50), limiter.acquire())
-                .await
-                .expect("permit should be available after capacity grew");
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn observe_does_not_shrink() {
-        let limiter = AdaptiveLimiter::new(&RateLimitConfig {
-            initial_capacity: 5,
-            window: Duration::from_secs(1),
-        });
-        // Acquire 3 permits; 2 remain available.
-        for _ in 0..3 {
-            limiter.acquire().await;
-        }
-
-        // Server advertises a tighter quota -- limiter must NOT reclaim
-        // permits in flight; the remaining 2 stay available so the
-        // observed value of 5 is preserved.
-        limiter.observe(&hdrs(r#""1-in-1sec"; q=1; w=1"#));
-
-        for _ in 0..2 {
-            tokio::time::timeout(Duration::from_millis(50), limiter.acquire())
-                .await
-                .expect("pre-shrink permits remain usable");
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn observe_no_op_when_header_absent() {
-        let limiter = AdaptiveLimiter::new(&RateLimitConfig::default());
-        limiter.observe(&HeaderMap::new());
-        // Should not panic; capacity unchanged.
-        assert_eq!(limiter.inner.capacity.load(Ordering::Acquire), 10);
-    }
-}
+// Behaviour is exercised end-to-end against a wiremock server in
+// `tests/rate_limit.rs::proactive_throttle_caps_burst_to_configured_capacity`.
+// Governor uses its own monotonic clock (quanta), which tokio's
+// `start_paused = true` cannot stub, so reliable timing assertions live in
+// the integration suite.

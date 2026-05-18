@@ -14,6 +14,7 @@
 //! 3. The proactive throttle stops a burst of requests from exceeding
 //!    the advertised quota even without server-side 429s.
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -144,8 +145,8 @@ async fn proactive_throttle_caps_burst_to_configured_capacity() {
         .base_url(server.uri())
         .api_key(SecretString::from("test-key".to_string()))
         .rate_limit(Some(RateLimitConfig {
-            initial_capacity: 3,
-            window: Duration::from_secs(1),
+            rate: NonZeroU32::new(3).expect("3 is non-zero"),
+            per: Duration::from_secs(1),
         }))
         .build()
         .expect("client builds");
