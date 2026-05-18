@@ -671,6 +671,105 @@ fn edit_warns_when_creating_new_file() {
     assert!(cfg_path.exists());
 }
 
+// ----------------- regression: Copilot review fixes -----------------
+
+/// `config show` must not report `--config` as the api_key source --
+/// `--config` is a config-file path, not an `--api-key-file` path. See
+/// Copilot review comment id 3258819815.
+#[test]
+fn show_does_not_attribute_api_key_to_config_flag() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    // Config file has no api_key / api_key_file, env has neither.
+    fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write");
+    let out = cmd
+        .args([
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--json=true",
+            "config",
+            "show",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let api_key_row = parsed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["field"] == "api_key")
+        .expect("api_key row");
+    assert_eq!(api_key_row["value"], "<unset>");
+    assert_eq!(api_key_row["source"], "default");
+}
+
+/// `config show` reports `log_level = warn` (the runtime default) with
+/// source `default` instead of `<unset>` when neither flag nor file
+/// supplies a value. See Copilot review comment id 3258819952.
+#[test]
+fn show_log_level_defaults_to_warn_with_default_source() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write"); // no log_level
+    let out = cmd
+        .args([
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--json=true",
+            "config",
+            "show",
+            "log_level",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(parsed["value"], "warn");
+    assert_eq!(parsed["source"], "default");
+}
+
+/// Cross-source mutual exclusion: setting `host` in the file and
+/// `--base-url` on the flag (or any other cross-source pairing) must
+/// be rejected. See Copilot review comment id 3258819909.
+#[test]
+fn host_in_file_plus_base_url_flag_is_rejected() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write");
+    // The command will fail before any network call because of the
+    // cross-source check. We use `info` as a non-config command path.
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "--base-url",
+        "https://example/proxy/protect/integration",
+        "info",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("cannot both be set"));
+}
+
+#[test]
+fn host_and_base_url_both_on_argv_is_rejected_by_clap() {
+    let mut cmd = common::isolated_cmd();
+    cmd.args([
+        "--host",
+        "nvr.local",
+        "--base-url",
+        "https://example/proxy/protect/integration",
+        "info",
+    ])
+    .assert()
+    .failure()
+    .stderr(
+        predicate::str::contains("cannot be used with").or(predicate::str::contains("conflicts")),
+    );
+}
+
 #[test]
 fn edit_existing_file_emits_no_creation_warning() {
     let mut cmd = common::isolated_cmd();

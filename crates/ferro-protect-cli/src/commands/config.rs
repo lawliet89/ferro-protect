@@ -118,8 +118,10 @@ pub enum Action {
     /// Set or unset a single field in the config file. Preserves
     /// comments and formatting via `toml_edit`. Refuses to set
     /// `api_key` from argv (would land in shell history / `ps`).
-    /// Creates the file (with just the edited value) if it doesn't
-    /// exist yet, emitting a stderr warning when it does so.
+    /// If the file doesn't exist yet, creates it with a wizard-style
+    /// header plus the edited field, and emits a stderr `note:`
+    /// pointing at `config init` / `config init --template` for
+    /// richer scaffolding.
     Edit {
         /// Field name. Use `ferro-protect config show` to see the
         /// recognized fields.
@@ -259,7 +261,11 @@ where
     // is true for that invocation only and misleading as "the
     // effective config".
     let resolved = config::resolve(&Flags::default(), Some(&loaded), env);
-    let api_key = resolve_api_key_source_only(config_flag, Some(&loaded), env);
+    // `flag_file: None` -- `config show` deliberately ignores
+    // per-invocation flags besides `--config` (see comment on `Flags`
+    // below). We never want `--config` (a *config* file path) to be
+    // mistaken for `--api-key-file`.
+    let api_key = resolve_api_key_source_only(None, Some(&loaded), env);
 
     key.map_or_else(
         || show_all(&resolved, api_key, json),
@@ -331,20 +337,14 @@ fn show_all(
         return Ok(());
     }
 
-    let width = rows.iter().map(|r| r.field.len()).max().unwrap_or(0);
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| vec![r.field.to_owned(), r.value.clone(), r.source.clone()])
+        .collect();
     let stdout = io::stdout();
     let mut lock = stdout.lock();
-    for r in &rows {
-        writeln!(
-            lock,
-            "{:<width$} = {:<20}  # from {}",
-            r.field,
-            r.value,
-            r.source,
-            width = width,
-        )
+    lock.write_all(crate::output::table(&["FIELD", "VALUE", "SOURCE"], &table_rows).as_bytes())
         .map_err(|e| ConfigCmdError::Other(e.into()))?;
-    }
     Ok(())
 }
 
@@ -426,8 +426,8 @@ fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec
     });
     rows.push(ShowRow {
         field: "log_level",
-        value: render_opt(resolved.log_level.as_ref(), |l| l.as_str().to_owned()),
-        source: source_label(resolved.log_level.as_ref().map(|r| &r.source), cfg_path),
+        value: resolved.log_level.value.as_str().to_owned(),
+        source: source_label(Some(&resolved.log_level.source), cfg_path),
     });
     rows
 }

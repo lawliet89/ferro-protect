@@ -32,7 +32,7 @@ struct Cli {
     /// then the `host` key in the config file. Hostname only -- no
     /// scheme prefix, no path. The client wraps it as
     /// `https://{host}/proxy/protect/integration`.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "base_url")]
     host: Option<String>,
 
     /// Override the entire base URL (useful for tests). Mutually
@@ -164,7 +164,7 @@ enum Command {
         action: commands::viewers::Action,
     },
     /// Manage the persistent TOML config file. See the subcommand's
-    /// own `--help` for the four actions (init/show/edit/path).
+    /// own `--help` for the five actions (init/show/edit/path/delete).
     Config {
         #[command(subcommand)]
         action: commands::config::Action,
@@ -174,7 +174,6 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    logging::init(cli.log_level.map(LogLevel::as_filter));
     run(cli).await
 }
 
@@ -182,17 +181,13 @@ async fn run(cli: Cli) -> Result<()> {
     // Config-file commands are special: they should run before we
     // try to build a `ProtectClient`. The `Config` subcommand
     // doesn't need an API key, a host, or anything network-shaped.
+    // It also doesn't depend on the file's log_level (the file is
+    // what it's *managing*), so flag-only init is correct here.
     if let Command::Config { action } = cli.command {
+        logging::init(cli.log_level.map(LogLevel::as_filter), None);
         return commands::config::run(action, cli.config.as_deref(), cli.json.unwrap_or(false))
             .map_err(Into::into);
     }
-
-    log::debug!(
-        "ferro-protect starting: command={:?}, json={:?}, insecure={:?}",
-        std::mem::discriminant(&cli.command),
-        cli.json,
-        cli.insecure,
-    );
 
     let env = |k: &str| std::env::var(k).ok();
     let loaded = config::load(cli.config.as_deref(), &env)?;
@@ -206,6 +201,37 @@ async fn run(cli: Cli) -> Result<()> {
         log_level: cli.log_level,
     };
     let resolved = config::resolve(&flags, loaded.as_ref(), &env);
+
+    // Init logging *after* config load so the file's `log_level` can
+    // act as a fallback when neither --log-level nor UNIFI_PROTECT_LOG
+    // / RUST_LOG is set. The flag is still highest-priority via the
+    // `cli_level` arg.
+    let file_log_fallback = loaded
+        .as_ref()
+        .and_then(|lc| lc.file.log_level)
+        .map(LogLevel::as_filter);
+    logging::init(cli.log_level.map(LogLevel::as_filter), file_log_fallback);
+
+    log::debug!(
+        "ferro-protect starting: command={:?}, json={:?}, insecure={:?}",
+        std::mem::discriminant(&cli.command),
+        cli.json,
+        cli.insecure,
+    );
+
+    // Cross-source mutual exclusion: clap's `conflicts_with` only
+    // catches the `--host ... --base-url ...` case on argv. A user can
+    // still set `host` in the file and `--base-url` on the flag, or
+    // mix env + file. Reject any combination where both end up resolved.
+    if let (Some(h), Some(b)) = (resolved.host.as_ref(), resolved.base_url.as_ref()) {
+        return Err(anyhow!(
+            "`host` and `base_url` cannot both be set. \
+             host comes from {:?}, base_url from {:?}. \
+             Pick one source per option and clear the other.",
+            h.source,
+            b.source,
+        ));
+    }
 
     // Resolve the key in a sync block so the stderr lock guard (which
     // isn't Send) never lives across an .await point.
