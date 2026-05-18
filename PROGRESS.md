@@ -616,8 +616,8 @@ high-payoff for this codebase:
 
 - `#[expect(dead_code, reason = "wired up in phases 5-8")]` on the
   four parked HTTP helpers in `client.rs`. When phase 5 actually
-  wires up `post_json`, the lint flips to a warning and the stale
-  attribute removes itself automatically.
+  wires up `post_json`, the `unfulfilled_lint_expectations` lint
+  fires and surfaces the stale attribute for manual removal.
 - New workspace lints: `unsafe_op_in_unsafe_fn = "deny"` (belt-
   and-braces over the existing `unsafe_code = "forbid"`),
   `unused_lifetimes = "warn"`, `clippy::allow_attributes = "warn"`,
