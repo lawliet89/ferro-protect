@@ -449,6 +449,11 @@ where
         path: tmp.clone(),
         source,
     })?;
+    // `std::fs::rename` atomically replaces an existing destination on
+    // both Unix and Windows. On Windows it has called `MoveFileExW` with
+    // `MOVEFILE_REPLACE_EXISTING` since Rust 1.79; our MSRV is 1.85, so
+    // no platform-specific delete-then-rename dance is needed for
+    // `--force` to overwrite.
     if let Err(source) = fs::rename(&tmp, &target_path) {
         let _ = fs::remove_file(&tmp);
         return Err(ConfigCmdError::Io {
