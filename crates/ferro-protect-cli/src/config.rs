@@ -279,7 +279,12 @@ pub struct ResolvedConfig {
     pub api_key_file: Option<Resolved<PathBuf>>,
     pub insecure: Resolved<bool>,
     pub json: Resolved<bool>,
-    pub log_level: Option<Resolved<LogLevel>>,
+    /// Always populated -- `FieldSource::Default` carries `LogLevel::Warn`
+    /// when no flag / file value was supplied. `UNIFI_PROTECT_LOG` and
+    /// `RUST_LOG` are *not* reflected here because their `env_logger`
+    /// filter syntax cannot be reduced to a single `LogLevel` variant;
+    /// they may still override this value at the live logger.
+    pub log_level: Resolved<LogLevel>,
     /// The path of the file the values were merged from, if any. Used
     /// for `ConfigFile` source attribution in `config show`.
     pub config_file_path: Option<PathBuf>,
@@ -325,20 +330,26 @@ where
     // `env_logger`, which can't be reduced to a single `LogLevel`
     // variant. `config show` reports the file attribution; whether the
     // live logger is running with that value is a separate question.
-    let log_level = flags.log_level.map_or_else(
-        || {
-            cf.and_then(|c| c.log_level).map(|v| Resolved {
-                value: v,
-                source: FieldSource::ConfigFile,
-            })
-        },
-        |v| {
-            Some(Resolved {
-                value: v,
-                source: FieldSource::Flag,
-            })
-        },
-    );
+    #[expect(
+        clippy::option_if_let_else,
+        reason = "three-way precedence chain reads more clearly as if/else-if than nested map_or_else"
+    )]
+    let log_level = if let Some(v) = flags.log_level {
+        Resolved {
+            value: v,
+            source: FieldSource::Flag,
+        }
+    } else if let Some(v) = cf.and_then(|c| c.log_level) {
+        Resolved {
+            value: v,
+            source: FieldSource::ConfigFile,
+        }
+    } else {
+        Resolved {
+            value: LogLevel::Warn,
+            source: FieldSource::Default,
+        }
+    };
 
     ResolvedConfig {
         host,
