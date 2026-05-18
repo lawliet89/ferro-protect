@@ -4,80 +4,124 @@
 //! integration API. Doubles as a living integration test for the
 //! `ferro-protect` library.
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result, anyhow};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use ferro_protect::{ProtectClient, TlsMode};
+use ferro_protect_cli::api_key::Sources;
+use ferro_protect_cli::config::{self, Flags};
+use ferro_protect_cli::logging::LogLevel;
 use ferro_protect_cli::{api_key, commands, logging};
 
 /// Command-line interface for the UniFi Protect integration API.
+///
+/// All global flags can also be set via env vars (see `--help` long
+/// form on each) or in the TOML config file at
+/// `$XDG_CONFIG_HOME/ferro-protect/config.toml`. Precedence is
+/// **flag > env > config file > built-in default**. Run
+/// `ferro-protect config init` to generate the file interactively, or
+/// `ferro-protect config show` to inspect the effective configuration
+/// and the source of each value.
 #[derive(Debug, Parser)]
 #[command(name = "ferro-protect", version, about, long_about = None)]
 struct Cli {
     /// NVR hostname (or host:port). Mutually exclusive with --base-url.
-    #[arg(long, global = true, env = "UNIFI_PROTECT_HOST")]
+    ///
+    /// Resolution order: this flag, then `UNIFI_PROTECT_HOST` env var,
+    /// then the `host` key in the config file. Hostname only -- no
+    /// scheme prefix, no path. The client wraps it as
+    /// `https://{host}/proxy/protect/integration`.
+    #[arg(long, global = true)]
     host: Option<String>,
 
-    /// Override the entire base URL (useful for tests).
-    #[arg(long, global = true, env = "UNIFI_PROTECT_BASE_URL")]
+    /// Override the entire base URL (useful for tests). Mutually
+    /// exclusive with --host.
+    ///
+    /// Resolution order: this flag, then `UNIFI_PROTECT_BASE_URL` env
+    /// var, then the `base_url` key in the config file.
+    #[arg(long, global = true)]
     base_url: Option<String>,
 
     /// Path to a file containing the API key.
     ///
-    /// The resolver also reads `UNIFI_PROTECT_API_KEY_FILE` and
-    /// `UNIFI_PROTECT_API_KEY` env vars (in that priority order). The
-    /// `env =` mapping is **deliberately not** declared on this flag so
-    /// clap doesn't bypass the manual precedence logic in
+    /// Resolution order for the API key (highest first):
+    ///   1. This flag.
+    ///   2. `UNIFI_PROTECT_API_KEY_FILE` env (path).
+    ///   3. `UNIFI_PROTECT_API_KEY` env (raw key).
+    ///   4. `api_key_file` in the config file (path).
+    ///   5. `api_key` in the config file (raw, discouraged).
+    ///
+    /// The `env =` mapping is **deliberately not** declared on this
+    /// flag so clap doesn't bypass the manual precedence logic in
     /// `api_key::resolve`.
     #[arg(long, global = true)]
-    api_key_file: Option<std::path::PathBuf>,
+    api_key_file: Option<PathBuf>,
 
-    /// Skip TLS certificate validation. Use only with NVRs whose cert you
-    /// cannot pin. Honours `UNIFI_PROTECT_INSECURE` from the env (accepts
-    /// 1/true/yes/on and 0/false/no/off) so a single sourced `.env.local`
-    /// drives both the CLI and the live tests.
+    /// Path to the TOML config file to load.
+    ///
+    /// File-discovery precedence (highest first): this flag,
+    /// `UNIFI_PROTECT_CONFIG_FILE` env var, then the XDG default
+    /// (`$XDG_CONFIG_HOME/ferro-protect/config.toml`).
+    ///
+    /// The first two are *authoritative*: a missing file is a hard
+    /// error. The XDG default is *opportunistic*: a missing file at
+    /// the XDG path is fine and means "no config".
+    ///
+    /// The env-var name mirrors `UNIFI_PROTECT_API_KEY_FILE`: `_FILE`
+    /// suffix means "path to a file" (vs. a raw value).
+    ///
+    /// The `env =` mapping is **deliberately not** declared on this
+    /// flag so the env lookup happens explicitly in `config::load` and
+    /// stays separable from the field-level resolver.
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
+
+    /// Skip TLS certificate validation. Use only with NVRs whose cert
+    /// you cannot pin. Accepts `1`/`0`, `true`/`false`, `yes`/`no`,
+    /// `on`/`off`, case-insensitive (also bare `--insecure` for true).
+    ///
+    /// Resolution order: this flag, then `UNIFI_PROTECT_INSECURE` env
+    /// var, then the `insecure` key in the config file. Default
+    /// `false`.
     #[arg(
         long,
         global = true,
-        env = "UNIFI_PROTECT_INSECURE",
         value_parser = clap::builder::BoolishValueParser::new(),
         num_args = 0..=1,
-        default_value_t = false,
         default_missing_value = "true",
+        require_equals = true,
     )]
-    insecure: bool,
+    insecure: Option<bool>,
 
-    /// Emit JSON instead of human-formatted output.
-    #[arg(long, global = true)]
-    json: bool,
+    /// Emit JSON instead of human-formatted output. Accepts the same
+    /// `1/0/true/false/yes/no/on/off` vocabulary as `--insecure`.
+    ///
+    /// Resolution order: this flag, then `UNIFI_PROTECT_JSON` env var,
+    /// then the `json` key in the config file. Default `false`. To
+    /// supply an explicit value use `--json=true` / `--json=false`;
+    /// bare `--json` is equivalent to `--json=true`.
+    #[arg(
+        long,
+        global = true,
+        value_parser = clap::builder::BoolishValueParser::new(),
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true,
+    )]
+    json: Option<bool>,
 
-    /// Log level for diagnostic output (writes to stderr). When unset,
-    /// falls back to `UNIFI_PROTECT_LOG`, then `RUST_LOG`, then `warn`.
+    /// Log level for diagnostic output (writes to stderr).
+    ///
+    /// Resolution order: this flag, then `UNIFI_PROTECT_LOG` env var
+    /// (env_logger filter syntax), then `RUST_LOG`, then the
+    /// `log_level` key in the config file, then the literal default
+    /// `warn`.
     #[arg(long, value_enum, global = true)]
     log_level: Option<LogLevel>,
 
     #[command(subcommand)]
     command: Command,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum LogLevel {
-    Error,
-    Warn,
-    Info,
-    Debug,
-    Trace,
-}
-
-impl LogLevel {
-    const fn as_filter(self) -> log::LevelFilter {
-        match self {
-            Self::Error => log::LevelFilter::Error,
-            Self::Warn => log::LevelFilter::Warn,
-            Self::Info => log::LevelFilter::Info,
-            Self::Debug => log::LevelFilter::Debug,
-            Self::Trace => log::LevelFilter::Trace,
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -119,6 +163,12 @@ enum Command {
         #[command(subcommand)]
         action: commands::viewers::Action,
     },
+    /// Manage the persistent TOML config file. See the subcommand's
+    /// own `--help` for the four actions (init/show/edit/path).
+    Config {
+        #[command(subcommand)]
+        action: commands::config::Action,
+    },
 }
 
 #[tokio::main]
@@ -129,55 +179,82 @@ async fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    // Config-file commands are special: they should run before we
+    // try to build a `ProtectClient`. The `Config` subcommand
+    // doesn't need an API key, a host, or anything network-shaped.
+    if let Command::Config { action } = cli.command {
+        return commands::config::run(action, cli.config.as_deref(), cli.json.unwrap_or(false))
+            .map_err(Into::into);
+    }
+
     log::debug!(
-        "ferro-protect starting: command={:?}, json={}, insecure={}",
+        "ferro-protect starting: command={:?}, json={:?}, insecure={:?}",
         std::mem::discriminant(&cli.command),
         cli.json,
         cli.insecure,
     );
 
+    let env = |k: &str| std::env::var(k).ok();
+    let loaded = config::load(cli.config.as_deref(), &env)?;
+
+    let flags = Flags {
+        host: cli.host.clone(),
+        base_url: cli.base_url.clone(),
+        api_key_file: cli.api_key_file.clone(),
+        insecure: cli.insecure,
+        json: cli.json,
+        log_level: cli.log_level,
+    };
+    let resolved = config::resolve(&flags, loaded.as_ref(), &env);
+
     // Resolve the key in a sync block so the stderr lock guard (which
     // isn't Send) never lives across an .await point.
-    let key = {
+    let (key, _key_source) = {
         let mut stderr = std::io::stderr().lock();
-        api_key::resolve(
-            cli.api_key_file.as_deref(),
-            &|name| std::env::var(name).ok(),
-            &mut stderr,
-        )?
+        let sources = Sources {
+            flag_file: cli.api_key_file.as_deref(),
+            config_file: loaded
+                .as_ref()
+                .and_then(|lc| lc.file.api_key_file.as_deref()),
+            config_raw: loaded.as_ref().and_then(|lc| lc.file.api_key.as_ref()),
+        };
+        api_key::resolve(&sources, &env, &mut stderr)?
     };
     log::debug!("api key resolved (source resolution complete)");
 
     let mut builder = ProtectClient::builder().api_key(key);
-    match (&cli.base_url, &cli.host) {
+    match (
+        resolved.base_url.as_ref().map(|r| r.value.as_str()),
+        resolved.host.as_ref().map(|r| r.value.as_str()),
+    ) {
         (Some(url), _) => builder = builder.base_url(url),
         (None, Some(host)) => builder = builder.host(host),
         (None, None) => return Err(anyhow!("one of --host or --base-url is required")),
     }
-    if cli.insecure {
+    if resolved.insecure.value {
         builder = builder.tls(TlsMode::AcceptInvalid);
     }
     let client = builder.build().context("failed to construct client")?;
 
+    let json = resolved.json.value;
     match cli.command {
         Command::Info => {
             let info = client.info().await.context("info request failed")?;
-            ferro_protect_cli::output::emit_stdout(&info, cli.json, || {
+            ferro_protect_cli::output::emit_stdout(&info, json, || {
                 format!(
                     "Protect application version: {}\n",
                     info.application_version
                 )
             })?;
         }
-        Command::Cameras { action } => commands::cameras::run(&client, action, cli.json).await?,
-        Command::Chimes { action } => commands::chimes::run(&client, action, cli.json).await?,
-        Command::Lights { action } => commands::lights::run(&client, action, cli.json).await?,
-        Command::Liveviews { action } => {
-            commands::liveviews::run(&client, action, cli.json).await?;
-        }
-        Command::Nvrs { action } => commands::nvrs::run(&client, action, cli.json).await?,
-        Command::Sensors { action } => commands::sensors::run(&client, action, cli.json).await?,
-        Command::Viewers { action } => commands::viewers::run(&client, action, cli.json).await?,
+        Command::Cameras { action } => commands::cameras::run(&client, action, json).await?,
+        Command::Chimes { action } => commands::chimes::run(&client, action, json).await?,
+        Command::Lights { action } => commands::lights::run(&client, action, json).await?,
+        Command::Liveviews { action } => commands::liveviews::run(&client, action, json).await?,
+        Command::Nvrs { action } => commands::nvrs::run(&client, action, json).await?,
+        Command::Sensors { action } => commands::sensors::run(&client, action, json).await?,
+        Command::Viewers { action } => commands::viewers::run(&client, action, json).await?,
+        Command::Config { .. } => unreachable!("handled above"),
     }
     Ok(())
 }

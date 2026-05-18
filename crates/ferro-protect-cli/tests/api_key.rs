@@ -12,11 +12,13 @@
 //! `env` callback parameter; each test passes its own closure instead of
 //! mutating `std::env::*`, so tests can run in parallel.
 
+mod common;
+
 use std::collections::HashMap;
 use std::io::Write;
 
-use ferro_protect_cli::api_key::{self, ApiKeyError, ENV_KEY, ENV_KEY_FILE};
-use secrecy::ExposeSecret;
+use ferro_protect_cli::api_key::{self, ApiKeyError, ApiKeySource, ENV_KEY, ENV_KEY_FILE, Sources};
+use secrecy::{ExposeSecret, SecretString};
 use tempfile::TempDir;
 
 /// Build a closure suitable for `api_key::resolve`'s `env` parameter. The
@@ -49,6 +51,13 @@ fn write_key_file(contents: &str) -> (TempDir, std::path::PathBuf) {
     (dir, path)
 }
 
+fn sources_flag(path: &std::path::Path) -> Sources<'_> {
+    Sources {
+        flag_file: Some(path),
+        ..Sources::default()
+    }
+}
+
 #[test]
 fn flag_wins_over_both_env_vars() {
     let (_d, path) = write_key_file("from-flag");
@@ -57,8 +66,10 @@ fn flag_wins_over_both_env_vars() {
         (ENV_KEY, "from-raw-env"),
     ]);
     let mut warnings = Vec::new();
-    let key = api_key::resolve(Some(&path), &env, &mut warnings).expect("resolves");
+    let (key, source) =
+        api_key::resolve(&sources_flag(&path), &env, &mut warnings).expect("resolves");
     assert_eq!(key.expose_secret(), "from-flag");
+    assert_eq!(source, ApiKeySource::Flag);
 }
 
 #[test]
@@ -69,34 +80,42 @@ fn file_env_wins_over_raw_env() {
         (ENV_KEY, "from-raw-env"),
     ]);
     let mut warnings = Vec::new();
-    let key = api_key::resolve(None, &env, &mut warnings).expect("resolves");
+    let (key, source) =
+        api_key::resolve(&Sources::default(), &env, &mut warnings).expect("resolves");
     assert_eq!(key.expose_secret(), "from-env-file");
+    assert_eq!(source, ApiKeySource::EnvFile);
 }
 
 #[test]
 fn raw_env_works_alone() {
     let env = env_from([(ENV_KEY, "raw-key")]);
     let mut warnings = Vec::new();
-    let key = api_key::resolve(None, &env, &mut warnings).expect("resolves");
+    let (key, source) =
+        api_key::resolve(&Sources::default(), &env, &mut warnings).expect("resolves");
     assert_eq!(key.expose_secret(), "raw-key");
+    assert_eq!(source, ApiKeySource::EnvRaw);
 }
 
 #[test]
 fn no_source_returns_not_provided_with_helpful_message() {
     let mut warnings = Vec::new();
-    let err = api_key::resolve(None, &empty_env(), &mut warnings).expect_err("errors");
+    let err =
+        api_key::resolve(&Sources::default(), &empty_env(), &mut warnings).expect_err("errors");
     assert!(matches!(err, ApiKeyError::NotProvided));
     let msg = err.to_string();
     assert!(msg.contains("--api-key-file"), "msg = {msg}");
     assert!(msg.contains(ENV_KEY_FILE), "msg = {msg}");
     assert!(msg.contains(ENV_KEY), "msg = {msg}");
+    assert!(msg.contains("api_key_file"), "msg = {msg}");
+    assert!(msg.contains("api_key"), "msg = {msg}");
 }
 
 #[test]
 fn empty_file_via_flag_errors() {
     let (_d, path) = write_key_file("");
     let mut warnings = Vec::new();
-    let err = api_key::resolve(Some(&path), &empty_env(), &mut warnings).expect_err("errors");
+    let err =
+        api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect_err("errors");
     match err {
         ApiKeyError::EmptyFile(p) => assert_eq!(p, path),
         other => panic!("expected EmptyFile, got {other:?}"),
@@ -107,7 +126,8 @@ fn empty_file_via_flag_errors() {
 fn whitespace_only_file_errors_as_empty() {
     let (_d, path) = write_key_file("   \n  \t  \n");
     let mut warnings = Vec::new();
-    let err = api_key::resolve(Some(&path), &empty_env(), &mut warnings).expect_err("errors");
+    let err =
+        api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect_err("errors");
     assert!(matches!(err, ApiKeyError::EmptyFile(_)));
 }
 
@@ -115,7 +135,8 @@ fn whitespace_only_file_errors_as_empty() {
 fn nonexistent_file_errors_with_path() {
     let mut warnings = Vec::new();
     let phantom = std::path::PathBuf::from("/definitely/does/not/exist/key");
-    let err = api_key::resolve(Some(&phantom), &empty_env(), &mut warnings).expect_err("errors");
+    let err =
+        api_key::resolve(&sources_flag(&phantom), &empty_env(), &mut warnings).expect_err("errors");
     match err {
         ApiKeyError::ReadFailed { path, .. } => assert_eq!(path, phantom),
         other => panic!("expected ReadFailed, got {other:?}"),
@@ -126,16 +147,86 @@ fn nonexistent_file_errors_with_path() {
 fn trims_trailing_whitespace_from_file_contents() {
     let (_d, path) = write_key_file("  the-key  \n\n");
     let mut warnings = Vec::new();
-    let key = api_key::resolve(Some(&path), &empty_env(), &mut warnings).expect("resolves");
+    let (key, _) =
+        api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect("resolves");
     assert_eq!(key.expose_secret(), "the-key");
 }
 
 #[test]
-fn empty_raw_env_treated_as_not_provided() {
+fn empty_raw_env_falls_through_to_not_provided() {
     let env = env_from([(ENV_KEY, "   \n")]);
     let mut warnings = Vec::new();
-    let err = api_key::resolve(None, &env, &mut warnings).expect_err("errors");
+    let err = api_key::resolve(&Sources::default(), &env, &mut warnings).expect_err("errors");
     assert!(matches!(err, ApiKeyError::NotProvided));
+}
+
+#[test]
+fn empty_raw_env_falls_through_to_config_file_source() {
+    let (_d, path) = write_key_file("from-config-file");
+    let env = env_from([(ENV_KEY, "   ")]);
+    let sources = Sources {
+        config_file: Some(&path),
+        ..Sources::default()
+    };
+    let mut warnings = Vec::new();
+    let (key, source) = api_key::resolve(&sources, &env, &mut warnings).expect("resolves");
+    assert_eq!(key.expose_secret(), "from-config-file");
+    assert_eq!(source, ApiKeySource::ConfigFile);
+}
+
+#[test]
+fn config_file_pointer_used_when_no_flag_or_env() {
+    let (_d, path) = write_key_file("from-config-file");
+    let sources = Sources {
+        config_file: Some(&path),
+        ..Sources::default()
+    };
+    let mut warnings = Vec::new();
+    let (key, source) = api_key::resolve(&sources, &empty_env(), &mut warnings).expect("resolves");
+    assert_eq!(key.expose_secret(), "from-config-file");
+    assert_eq!(source, ApiKeySource::ConfigFile);
+}
+
+#[test]
+fn config_raw_used_when_no_other_source() {
+    let secret = SecretString::from("from-config-raw");
+    let sources = Sources {
+        config_raw: Some(&secret),
+        ..Sources::default()
+    };
+    let mut warnings = Vec::new();
+    let (key, source) = api_key::resolve(&sources, &empty_env(), &mut warnings).expect("resolves");
+    assert_eq!(key.expose_secret(), "from-config-raw");
+    assert_eq!(source, ApiKeySource::ConfigRaw);
+}
+
+#[test]
+fn config_file_pointer_wins_over_config_raw() {
+    let (_d, path) = write_key_file("from-config-pointer");
+    let secret = SecretString::from("from-config-raw");
+    let sources = Sources {
+        config_file: Some(&path),
+        config_raw: Some(&secret),
+        ..Sources::default()
+    };
+    let mut warnings = Vec::new();
+    let (key, source) = api_key::resolve(&sources, &empty_env(), &mut warnings).expect("resolves");
+    assert_eq!(key.expose_secret(), "from-config-pointer");
+    assert_eq!(source, ApiKeySource::ConfigFile);
+}
+
+#[test]
+fn env_wins_over_config_sources() {
+    let secret = SecretString::from("from-config-raw");
+    let env = env_from([(ENV_KEY, "from-raw-env")]);
+    let sources = Sources {
+        config_raw: Some(&secret),
+        ..Sources::default()
+    };
+    let mut warnings = Vec::new();
+    let (key, source) = api_key::resolve(&sources, &env, &mut warnings).expect("resolves");
+    assert_eq!(key.expose_secret(), "from-raw-env");
+    assert_eq!(source, ApiKeySource::EnvRaw);
 }
 
 #[cfg(unix)]
@@ -147,7 +238,7 @@ fn warns_on_lax_file_permissions() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
 
     let mut warnings: Vec<u8> = Vec::new();
-    let _key = api_key::resolve(Some(&path), &empty_env(), &mut warnings).expect("resolves");
+    let _ = api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect("resolves");
     let msg = String::from_utf8(warnings).unwrap();
     assert!(msg.contains("warning"), "expected warning, got: {msg}");
     assert!(msg.contains("chmod 600"), "expected fix hint, got: {msg}");
@@ -162,7 +253,7 @@ fn no_warning_on_tight_file_permissions() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
 
     let mut warnings: Vec<u8> = Vec::new();
-    let _key = api_key::resolve(Some(&path), &empty_env(), &mut warnings).expect("resolves");
+    let _ = api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect("resolves");
     assert!(
         warnings.is_empty(),
         "unexpected warning: {:?}",

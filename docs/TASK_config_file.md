@@ -334,6 +334,32 @@ All test files live under `crates/ferro-protect-cli/tests/`.
 
 **Live tests**: none. This chore touches no network code.
 
+### Test isolation from the developer's own config
+
+The new XDG-default discovery means a developer who has previously run
+`ferro-protect config init` has a real `config.toml` under `$HOME`.
+Without precautions, every `assert_cmd`-driven CLI integration test
+would silently pick it up — host, insecure, log_level, even
+`api_key`/`api_key_file` could leak in.
+
+Mitigation:
+
+- Add a small helper in `crates/ferro-protect-cli/tests/common.rs`
+  (new file) that returns a `Command` with `HOME` pointed at a
+  per-test `TempDir` and `XDG_CONFIG_HOME` removed, plus every
+  `UNIFI_PROTECT_*` env var removed. Every CLI test that does **not**
+  specifically want to exercise XDG discovery should use it.
+- The tests that *do* exercise XDG discovery
+  (`cli_config.rs::config_path_falls_back_to_xdg_default` etc.) point
+  `HOME` and `XDG_CONFIG_HOME` at a controlled tempdir explicitly.
+- **Library live tests** (`crates/ferro-protect/tests/common/mod.rs`)
+  are intentionally **not** taught to read the config file. They
+  remain env-driven, so a developer with a populated config file but
+  no sourced `.env.local` still sees `cargo test --all` skip live
+  tests rather than hit a real NVR. This is documented in the README
+  testing section and called out in the commit body as a deliberate
+  scoping decision.
+
 ## Docs
 
 1. **`README.md`** — new "Configuration" section between "Quick start"
@@ -353,6 +379,15 @@ All test files live under `crates/ferro-protect-cli/tests/`.
      at a *key* file, not a *config* file.
    - Link to `ferro-protect config init` as the recommended way to
      produce a valid config file.
+   - **Subsection "Config files and the test suite"**: explicitly
+     states that the library's live tests are env-driven, not
+     config-driven. Running `cargo test --all` with a populated
+     `~/.config/ferro-protect/config.toml` but no sourced
+     `.env.local` results in live tests skipping (not hitting your
+     real NVR). CLI integration tests isolate themselves from the
+     dev's config via `HOME=<tmpdir>`. To run live tests, source
+     `.env.local` or set `UNIFI_PROTECT_HOST` + a key source in
+     env.
 2. **`.env.example`** — append a short note that env vars override any
    `~/.config/ferro-protect/config.toml`, and that the typical split
    is "config file for interactive use, `.env.local` for tests and
