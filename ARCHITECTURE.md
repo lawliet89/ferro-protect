@@ -174,7 +174,7 @@ The current state. Updated whenever the structure changes.
 |---|---|
 | [Cargo.toml](Cargo.toml) | Workspace manifest. Shared `[workspace.dependencies]`, lints (`pedantic + nursery`, `unsafe_code = "forbid"`), `[profile.dev.package]` overrides for insta+similar. |
 | [rust-toolchain.toml](rust-toolchain.toml) | Pins stable channel + components. |
-| [rustfmt.toml](rustfmt.toml) | `edition = "2021"`, `max_width = 100`. |
+| [rustfmt.toml](rustfmt.toml) | `edition = "2024"`, `max_width = 100`. |
 | [deny.toml](deny.toml) | License allow-list, advisory checks, source allow-list (includes the unifi-apis submodule URL). |
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | fmt → clippy → test → deny. Refuses to run if `UNIFI_PROTECT_*` env vars are present. |
 | [scripts/pre-commit](scripts/pre-commit) | Local hook: fmt + clippy. |

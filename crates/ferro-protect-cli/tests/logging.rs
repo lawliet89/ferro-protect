@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! Smoke tests for the logging wiring: confirm the level filter applies
 //! and goes to stderr.

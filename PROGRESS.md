@@ -589,3 +589,96 @@ between two vocabularies for the same concept. No behaviour change.
   green.
 
 **Next**: Phase 4c (lights read endpoints).
+
+## 2026-05-18 09:33 +0800 — Chore: migrate workspace to Rust edition 2024
+
+**Status**: complete
+
+**Summary**:
+Bumped the workspace from Rust edition 2021 to 2024, MSRV from
+1.83 to 1.85, and `resolver` from "2" to "3" (MSRV-aware
+dependency unification). `cargo fix --edition` reported migrations
+on every source file but produced no actual diff — the pre-flight
+survey in [docs/TASK_edition_2024.md](docs/TASK_edition_2024.md)
+correctly anticipated that the codebase used none of the patterns
+2024 breaks (`env::set_var`, `extern` blocks, `#[no_mangle]`, `gen`
+identifiers, `impl Trait` returns in hand-written code). `typify`'s
+generated `$OUT_DIR/generated.rs` compiles clean under 2024 with no
+post-processing. The visible source change came from rustfmt: with
+`edition = "2024"` it reorders `use` lists by full path with
+sub-imports first (e.g. `use serde::de::DeserializeOwned;` now
+sorts before `use serde::Serialize;`).
+
+Adopted the targeted 2024 ergonomics the plan flagged as
+high-payoff for this codebase:
+
+- `#[expect(dead_code, reason = "wired up in phases 5-8")]` on the
+  four parked HTTP helpers in `client.rs`. When phase 5 actually
+  wires up `post_json`, the lint flips to a warning and the stale
+  attribute removes itself automatically.
+- New workspace lints: `unsafe_op_in_unsafe_fn = "deny"` (belt-
+  and-braces over the existing `unsafe_code = "forbid"`),
+  `unused_lifetimes = "warn"`, `clippy::allow_attributes = "warn"`,
+  `clippy::allow_attributes_without_reason = "warn"`.
+
+**Files added/changed**:
+- `Cargo.toml` (edition, rust-version, resolver, new lints)
+- `rustfmt.toml` (`edition = "2024"`)
+- `ARCHITECTURE.md` (file-map row for rustfmt.toml)
+- `crates/ferro-protect/src/client.rs` (`#[allow]` → `#[expect]`
+  on phase 5-8 helpers; rustfmt-driven `use` reordering)
+- `crates/ferro-protect/src/lib.rs`,
+  `crates/ferro-protect/build.rs`,
+  `crates/ferro-protect/build_support/spec_rewrite.rs`,
+  `crates/ferro-protect/src/generated.rs`,
+  `crates/ferro-protect/tests/common/mod.rs`,
+  `crates/ferro-protect-cli/src/lib.rs`,
+  `crates/ferro-protect-cli/src/main.rs`
+  (added `reason = "..."` to every `#![allow]` for the new
+  `allow_attributes_without_reason` lint; rustfmt reflow)
+- All 20 `tests/*.rs` files in both crates (same: reasoned
+  `#![allow(clippy::pedantic, clippy::nursery, reason = ...)]`)
+- `crates/ferro-protect-cli/tests/api_key.rs` and
+  `crates/ferro-protect/tests/model_codegen.rs` (removed two
+  `#[allow(dead_code)]` attributes — the new
+  `clippy::allow_attributes` lint correctly flagged them as
+  unfulfilled; `_seam_signatures` and `_ensure_write_in_scope`
+  do not actually trigger the `dead_code` lint under the current
+  compiler)
+- `PROGRESS.md` (this entry)
+
+**Decisions / deviations**:
+
+- The plan's "let-chains in `api_key::resolve`" item did not pay
+  off on closer reading. The function is three sequential
+  `if let Some(..) = source { return ... }` precedence steps, not
+  a nested `if let A { if let B { ... } }` shape that let-chains
+  would flatten. Forcing a `let-chain` here would either
+  double-call `.trim()` or change the control-flow structure.
+  Skipped; the existing form is already clean.
+- The `allow_attributes_without_reason` lint hit more sites than
+  the plan estimated (~22, not "one or two lines"), but each fix
+  was mechanical — one `reason = "..."` appended per site, no
+  semantics change. Bundled with this commit rather than
+  deferred. The plan's "balloon the diff" caveat was about non-
+  mechanical fixes (e.g. clippy::pedantic firing on real code);
+  this matched the spirit of "small fix per site."
+- Removed two `#[allow(dead_code)]` attributes
+  (`_seam_signatures`, `_ensure_write_in_scope`) instead of
+  converting them to `#[expect(dead_code, ...)]`. `cargo clippy`
+  reported `unfulfilled_lint_expectations` on the `expect` form,
+  meaning the underlying `dead_code` lint never actually fired on
+  those items in the first place — so the original allows were
+  defensive but redundant. If `dead_code` starts firing later
+  (e.g. a future compiler tightening or a code change), the
+  attributes can be re-added then.
+- Did not touch `PLAN.md` line 98 (`rustfmt.toml: edition =
+  "2021"` in the phase 0 description) — that line is a historical
+  record of what phase 0 created, not a live spec. Same reasoning
+  AGENT.md applies to PROGRESS.md.
+- Did not bump the README "Requires Rust" line — the README does
+  not state an MSRV at all; the canonical source is
+  `workspace.package.rust-version`.
+
+**Next**: Phase 4c (lights read endpoints). Edition bump is
+unblocking, not a precondition.

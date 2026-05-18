@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown)]
+#![allow(
+    clippy::doc_markdown,
+    reason = "doc strings reference snake_case identifiers and bare URLs"
+)]
 
 //! Async Rust client for the UniFi Protect local integration API (v7.1.60).
 //!

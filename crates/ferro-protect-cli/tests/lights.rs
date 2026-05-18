@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! End-to-end CLI tests for `ferro-protect lights …` against wiremock.
 

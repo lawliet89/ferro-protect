@@ -2,10 +2,13 @@
 //!
 //! Cargo compiles every `tests/*.rs` file as a separate integration-test
 //! binary, so each test file that wants these helpers brings them in with
-//! `mod common;` at the top. The `#[allow(dead_code)]` is intentional --
+//! `mod common;` at the top. The blanket `dead_code` allow is intentional --
 //! tests that use only one helper would otherwise warn about the others.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each integration-test binary uses only a subset of these helpers"
+)]
 
 use ferro_protect::ProtectClient;
 use secrecy::SecretString;

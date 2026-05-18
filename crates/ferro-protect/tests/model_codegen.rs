@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! Focused smoke tests for the generated-model seam.
 //!
@@ -67,7 +71,6 @@ fn _assert_derives() {
 // Compile-only fingerprint of the seam: name every re-exported type in
 // a signature so a rename in `models.rs` (the seam) or in the typify
 // output it pulls from fails here before reaching wrapper code.
-#[allow(dead_code)]
 fn _seam_signatures(
     _info: ApplicationInfo,
     _camera: Camera,

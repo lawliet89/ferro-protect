@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use ferro_protect::models::{Viewer, ViewerId};
 use ferro_protect::ProtectClient;
+use ferro_protect::models::{Viewer, ViewerId};
 
 use crate::output;
 

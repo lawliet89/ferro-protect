@@ -6,7 +6,10 @@
 //! The pipeline is intentionally pure: same input always produces same
 //! output, no I/O, no environment reads.
 
-#![allow(clippy::doc_markdown)]
+#![allow(
+    clippy::doc_markdown,
+    reason = "doc strings reference snake_case identifiers and bare URLs"
+)]
 
 /// Apply the schema-only preprocessing pipeline.
 ///
