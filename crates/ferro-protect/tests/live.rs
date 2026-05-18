@@ -327,3 +327,44 @@ async fn live_read_chimes_get() {
     );
     assert_eq!(fetched.id, first.id, "list+get should agree on id");
 }
+
+#[tokio::test]
+async fn live_read_cameras_snapshot() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_snapshot: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    let Some(first) = cameras.first() else {
+        println!("(skipping live_read_cameras_snapshot: NVR has no cameras)");
+        return;
+    };
+    let bytes = client
+        .cameras()
+        .snapshot(&first.id)
+        .await
+        .expect("cameras snapshot call succeeded");
+    // Don't snapshot-test the bytes themselves -- camera frames differ on
+    // every call. The contract is "non-empty JPEG"; that's all we assert.
+    assert!(
+        bytes.len() > 3,
+        "snapshot bytes too short to be a JPEG: {} bytes",
+        bytes.len()
+    );
+    assert_eq!(
+        &bytes[..3],
+        &[0xFF, 0xD8, 0xFF],
+        "snapshot does not start with the JPEG SOI magic bytes; got {:02X?}",
+        &bytes[..3]
+    );
+    println!(
+        "live_read_cameras_snapshot: fetched {} bytes from camera {} ({:?})",
+        bytes.len(),
+        first.id,
+        first.name
+    );
+}

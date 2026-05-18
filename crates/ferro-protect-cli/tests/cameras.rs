@@ -9,7 +9,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FIXTURE_EMPTY_LIST: &str = "[]";
@@ -97,4 +97,85 @@ async fn cameras_get_404_reports_error_and_nonzero_exit() {
         .failure()
         .stderr(predicate::str::contains("notFound"))
         .stderr(predicate::str::contains("404"));
+}
+
+/// Minimal 4-byte JPEG-shaped payload (SOI magic + a tail byte).
+/// Real Protect responses are obviously larger; this is enough to
+/// exercise the CLI's write path without smuggling a fixture file.
+const FIXTURE_JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0];
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_snapshot_writes_to_out_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/cameras/abc/snapshot"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(FIXTURE_JPEG)
+                .insert_header("content-type", "image/jpeg"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    let out_path = tmp.path().to_path_buf();
+    let base_url = server.uri();
+    let out_arg = out_path.display().to_string();
+    let assert = tokio::task::spawn_blocking(move || {
+        run_cmd(
+            &base_url,
+            &["cameras", "snapshot", "abc", "--out", &out_arg],
+        )
+    })
+    .await
+    .expect("spawn_blocking");
+
+    assert.success();
+    let written = std::fs::read(&out_path).expect("read snapshot tempfile");
+    assert_eq!(written, FIXTURE_JPEG, "snapshot bytes round-trip to --out");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_snapshot_forwards_channel_and_high_quality_flags() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/cameras/abc/snapshot"))
+        .and(query_param("channel", "package"))
+        .and(query_param("highQuality", "true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(FIXTURE_JPEG)
+                .insert_header("content-type", "image/jpeg"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    let out_path = tmp.path().to_path_buf();
+    let base_url = server.uri();
+    let out_arg = out_path.display().to_string();
+    let assert = tokio::task::spawn_blocking(move || {
+        run_cmd(
+            &base_url,
+            &[
+                "cameras",
+                "snapshot",
+                "abc",
+                "--channel",
+                "package",
+                "--high-quality",
+                "--out",
+                &out_arg,
+            ],
+        )
+    })
+    .await
+    .expect("spawn_blocking");
+
+    // wiremock's `expect(1)` + query_param matchers will fail the
+    // mount-time `.verify()` on drop if the CLI did not send the
+    // expected query string. `.success()` here is enough.
+    assert.success();
 }

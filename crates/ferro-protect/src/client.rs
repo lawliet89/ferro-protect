@@ -180,7 +180,6 @@ impl ProtectClient {
         Err(Error::from_response(response).await)
     }
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
         let response = self.http_read.get(self.url(path)?).send().await?;
