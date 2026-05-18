@@ -149,7 +149,7 @@ where
     // would mean `config show --insecure` claims insecure=Flag, which
     // is true for that invocation only and misleading as "the
     // effective config".
-    let resolved = config::resolve(&Flags::default(), Some(&loaded), env);
+    let resolved = config::resolve(&Flags::default(), Some(&loaded), env)?;
     // `flag_file: None` -- `config show` deliberately ignores
     // per-invocation flags besides `--config`. We never want
     // `--config` (a *config* file path) to be mistaken for

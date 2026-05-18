@@ -206,6 +206,14 @@ pub enum ConfigError {
     },
     #[error("could not determine config directory: {0}")]
     NoConfigDir(String),
+    #[error(
+        "env `{name}` has invalid value `{value}`: \
+         expected one of 1/0, true/false, yes/no, on/off (case-insensitive)"
+    )]
+    BadEnvBool {
+        name: &'static str,
+        value: String,
+    },
 }
 
 /// Which input picked the config-file path.
@@ -437,7 +445,17 @@ pub struct ResolvedConfig {
 /// API-key resolution is intentionally **not** done here; the API key
 /// has its own multi-source resolver in [`crate::api_key`] that takes a
 /// [`crate::api_key::Sources`] built from the same inputs.
-pub fn resolve<E>(flags: &Flags, file: Option<&LoadedConfig>, env: &E) -> ResolvedConfig
+///
+/// # Errors
+/// Returns [`ConfigError::BadEnvBool`] when a boolean env var
+/// (e.g. `UNIFI_PROTECT_INSECURE`, `UNIFI_PROTECT_JSON`) is set to a
+/// non-empty value that isn't a recognised boolish token. Falling
+/// through silently would mask misconfiguration.
+pub fn resolve<E>(
+    flags: &Flags,
+    file: Option<&LoadedConfig>,
+    env: &E,
+) -> Result<ResolvedConfig, ConfigError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
@@ -464,14 +482,14 @@ where
         env,
         cf.and_then(|c| c.insecure),
         false,
-    );
+    )?;
     let json = resolve_bool(
         env_var_for("json"),
         flags.json,
         env,
         cf.and_then(|c| c.json),
         false,
-    );
+    )?;
     // No env source for log_level on purpose: `--log-level` env handling
     // lives in the logger init flow and uses the same
     // `UNIFI_PROTECT_LOG` / `RUST_LOG` string-filter syntax as
@@ -499,7 +517,7 @@ where
         }
     };
 
-    ResolvedConfig {
+    Ok(ResolvedConfig {
         host,
         base_url,
         api_key_file,
@@ -507,7 +525,7 @@ where
         json,
         log_level,
         config_file_path: file.map(|lc| lc.path.clone()),
-    }
+    })
 }
 
 fn resolve_string<E>(
@@ -564,34 +582,44 @@ fn resolve_bool<E>(
     env: &E,
     file: Option<bool>,
     default: bool,
-) -> Resolved<bool>
+) -> Result<Resolved<bool>, ConfigError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     if let Some(v) = flag {
-        return Resolved {
+        return Ok(Resolved {
             value: v,
             source: FieldSource::Flag,
-        };
+        });
     }
-    if let Some(raw) = env(env_name)
-        && let Some(parsed) = parse_boolish(&raw)
-    {
-        return Resolved {
-            value: parsed,
-            source: FieldSource::Env(env_name),
-        };
+    // Empty/whitespace env var falls through (consistent with
+    // `resolve_string` and `api_key::resolve`). A non-empty but
+    // unrecognised value is a hard error -- silently falling through
+    // would mask misconfiguration like `UNIFI_PROTECT_JSON=tru`. The
+    // TOML side is similarly strict (a non-bool there fails parsing).
+    if let Some(raw) = env(env_name) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let parsed = parse_boolish(trimmed).ok_or_else(|| ConfigError::BadEnvBool {
+                name: env_name,
+                value: raw.clone(),
+            })?;
+            return Ok(Resolved {
+                value: parsed,
+                source: FieldSource::Env(env_name),
+            });
+        }
     }
     if let Some(v) = file {
-        return Resolved {
+        return Ok(Resolved {
             value: v,
             source: FieldSource::ConfigFile,
-        };
+        });
     }
-    Resolved {
+    Ok(Resolved {
         value: default,
         source: FieldSource::Default,
-    }
+    })
 }
 
 /// Same vocabulary as `clap::builder::BoolishValueParser`: accepts
@@ -675,7 +703,7 @@ mod tests {
             source: FileDiscoverySource::Flag,
         };
         let env = env_from([("UNIFI_PROTECT_HOST", "from-env")]);
-        let r = resolve(&flags, Some(&lc), &env);
+        let r = resolve(&flags, Some(&lc), &env).expect("resolve");
         let h = r.host.unwrap();
         assert_eq!(h.value, "from-flag");
         assert_eq!(h.source, FieldSource::Flag);
@@ -692,7 +720,7 @@ mod tests {
             source: FileDiscoverySource::XdgDefault,
         };
         let env = env_from([("UNIFI_PROTECT_HOST", "from-env")]);
-        let r = resolve(&Flags::default(), Some(&lc), &env);
+        let r = resolve(&Flags::default(), Some(&lc), &env).expect("resolve");
         let h = r.host.unwrap();
         assert_eq!(h.value, "from-env");
         assert_eq!(h.source, FieldSource::Env("UNIFI_PROTECT_HOST"));
@@ -708,7 +736,7 @@ mod tests {
             path: PathBuf::from("/cfg"),
             source: FileDiscoverySource::XdgDefault,
         };
-        let r = resolve(&Flags::default(), Some(&lc), &empty_env());
+        let r = resolve(&Flags::default(), Some(&lc), &empty_env()).expect("resolve");
         let h = r.host.unwrap();
         assert_eq!(h.value, "from-file");
         assert_eq!(h.source, FieldSource::ConfigFile);
@@ -716,9 +744,31 @@ mod tests {
 
     #[test]
     fn resolve_bool_default_when_unset() {
-        let r = resolve(&Flags::default(), None, &empty_env());
+        let r = resolve(&Flags::default(), None, &empty_env()).expect("resolve");
         assert!(!r.insecure.value);
         assert_eq!(r.insecure.source, FieldSource::Default);
+    }
+
+    #[test]
+    fn resolve_bool_rejects_invalid_env_value() {
+        // Regression: a non-empty but unparseable env bool used to fall
+        // through silently to file/default, masking a typo like
+        // `UNIFI_PROTECT_JSON=tru`. It must error instead.
+        let env = env_from([("UNIFI_PROTECT_JSON", "tru")]);
+        let err = resolve(&Flags::default(), None, &env).expect_err("should error");
+        assert!(
+            matches!(err, ConfigError::BadEnvBool { name: "UNIFI_PROTECT_JSON", ref value } if value == "tru"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    #[test]
+    fn resolve_bool_empty_env_falls_through() {
+        // `UNIFI_PROTECT_JSON=""` (or whitespace) is still "unset", not
+        // an error, matching `resolve_string` / `api_key::resolve`.
+        let env = env_from([("UNIFI_PROTECT_JSON", "   ")]);
+        let r = resolve(&Flags::default(), None, &env).expect("resolve");
+        assert_eq!(r.json.source, FieldSource::Default);
     }
 
     #[test]
@@ -732,7 +782,7 @@ mod tests {
             source: FileDiscoverySource::XdgDefault,
         };
         let env = env_from([("UNIFI_PROTECT_HOST", "")]);
-        let r = resolve(&Flags::default(), Some(&lc), &env);
+        let r = resolve(&Flags::default(), Some(&lc), &env).expect("resolve");
         // Empty env string is treated as "not set" so the file value
         // wins. Matches the spirit of clap's behavior, where setting
         // an env var to `""` typically means "don't override".
@@ -754,7 +804,7 @@ mod tests {
             source: FileDiscoverySource::XdgDefault,
         };
         let env = env_from([("UNIFI_PROTECT_HOST", "   \t\n")]);
-        let r = resolve(&Flags::default(), Some(&lc), &env);
+        let r = resolve(&Flags::default(), Some(&lc), &env).expect("resolve");
         assert_eq!(r.host.unwrap().source, FieldSource::ConfigFile);
     }
 
@@ -764,7 +814,7 @@ mod tests {
         // or shells that quote values with whitespace) should not end
         // up in the URL we hand to the HTTP client.
         let env = env_from([("UNIFI_PROTECT_HOST", "  nvr.local  \n")]);
-        let r = resolve(&Flags::default(), None, &env);
+        let r = resolve(&Flags::default(), None, &env).expect("resolve");
         let h = r.host.unwrap();
         assert_eq!(h.value, "nvr.local");
         assert_eq!(h.source, FieldSource::Env("UNIFI_PROTECT_HOST"));

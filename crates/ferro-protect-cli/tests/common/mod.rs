@@ -39,6 +39,12 @@ pub const SCRUBBED_ENV_VARS: &[&str] = &[
     "UNIFI_PROTECT_LOG",
     "UNIFI_PROTECT_CONFIG_FILE",
     "XDG_CONFIG_HOME",
+    // On Windows the default config dir comes from `%APPDATA%` (and
+    // `%LOCALAPPDATA%` as a secondary). Scrub both so a developer's
+    // real Windows config can't leak into tests; the helpers below
+    // also overwrite them to point at a sentinel/tempdir.
+    "APPDATA",
+    "LOCALAPPDATA",
 ];
 
 /// Sentinel `HOME` for tests that don't care about XDG discovery. The
@@ -58,6 +64,10 @@ pub fn isolated_cmd() -> Command {
         c.env_remove(v);
     }
     c.env("HOME", NONEXISTENT_HOME);
+    // Same sentinel for Windows: the XDG default on Windows reads
+    // `%APPDATA%`, so point it at a path that doesn't exist.
+    c.env("APPDATA", NONEXISTENT_HOME);
+    c.env("LOCALAPPDATA", NONEXISTENT_HOME);
     c
 }
 
@@ -73,6 +83,8 @@ pub fn cmd_with_tempdir_home() -> (TempDir, Command) {
         c.env_remove(v);
     }
     c.env("HOME", dir.path());
+    c.env("APPDATA", dir.path());
+    c.env("LOCALAPPDATA", dir.path());
     (dir, c)
 }
 
@@ -84,5 +96,7 @@ pub fn cmd_with_home(home: &Path) -> Command {
         c.env_remove(v);
     }
     c.env("HOME", home);
+    c.env("APPDATA", home);
+    c.env("LOCALAPPDATA", home);
     c
 }
