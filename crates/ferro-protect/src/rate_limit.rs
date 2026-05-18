@@ -29,6 +29,8 @@ use http::Extensions;
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
 
+use crate::error::{Error, Result};
+
 type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
 
 /// Public knobs for the proactive rate limiter.
@@ -55,20 +57,29 @@ impl Default for RateLimitConfig {
 }
 
 impl RateLimitConfig {
-    /// Convert into a `governor::Quota`. Panics only if `per` is zero,
-    /// which is rejected at construction time of a `Duration`-typed value
-    /// only when explicitly built as `Duration::ZERO` -- a misuse we don't
-    /// guard further here.
-    fn quota(&self) -> Quota {
+    /// Convert into a `governor::Quota`.
+    ///
+    /// # Errors
+    /// Returns [`Error::Other`] when the per-cell refill period
+    /// (`per / rate`) rounds down to zero — i.e. when `per` is
+    /// [`Duration::ZERO`] or when `per` in nanoseconds is smaller than
+    /// `rate`. Both are pathological configurations (sub-nanosecond pacing)
+    /// surfaced as a builder error rather than a panic.
+    fn quota(&self) -> Result<Quota> {
         // `Quota::with_period` takes the period *between* cell refills,
         // i.e. `per / rate`. `allow_burst` then sets the bucket depth.
-        let cell_period = self
-            .per
-            .checked_div(self.rate.get())
-            .expect("per must be non-zero");
+        // `Duration::checked_div` only returns `None` for a zero divisor,
+        // which `NonZeroU32` rules out -- so we just divide. `with_period`
+        // is the real fallible step: it rejects a zero period.
+        let cell_period = self.per / self.rate.get();
         Quota::with_period(cell_period)
-            .expect("cell period must be non-zero")
-            .allow_burst(self.rate)
+            .map(|q| q.allow_burst(self.rate))
+            .ok_or_else(|| {
+                Error::Other(format!(
+                    "rate-limit config rejected: rate={} per={:?} yields zero refill period",
+                    self.rate, self.per
+                ))
+            })
     }
 }
 
@@ -82,10 +93,10 @@ pub(crate) struct RateLimitMiddleware {
 }
 
 impl RateLimitMiddleware {
-    pub(crate) fn new(config: &RateLimitConfig) -> Self {
-        Self {
-            limiter: Arc::new(RateLimiter::direct(config.quota())),
-        }
+    pub(crate) fn new(config: &RateLimitConfig) -> Result<Self> {
+        Ok(Self {
+            limiter: Arc::new(RateLimiter::direct(config.quota()?)),
+        })
     }
 }
 

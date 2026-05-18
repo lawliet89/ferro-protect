@@ -354,7 +354,10 @@ impl ProtectClientBuilder {
         };
         // One shared GCRA limiter, cloned into both middleware stacks so
         // reads and writes share a single budget.
-        let opt_limiter = effective_rate_limit.as_ref().map(RateLimitMiddleware::new);
+        let opt_limiter = effective_rate_limit
+            .as_ref()
+            .map(RateLimitMiddleware::new)
+            .transpose()?;
 
         // `RateLimitMiddleware` is stacked *inside* (after) the retry
         // middleware so every retry attempt acquires a fresh permit.
