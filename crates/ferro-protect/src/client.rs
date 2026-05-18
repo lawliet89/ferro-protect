@@ -124,12 +124,13 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
-    // The helpers below are unused at phase 4 but cover the shapes
-    // phases 5-8 will need (PATCH/POST bodies, 204 No Content, binary
-    // payloads). Keeping them here means each future endpoint is a
-    // one-line wrapper rather than a one-helper-plus-one-line churn.
+    // POST/PATCH/DELETE/binary helpers. `post_json`, `post_empty_json`,
+    // and `get_bytes` are wired up by phase 5's camera endpoints;
+    // `patch_json` and `send_no_content` are still inert (carrying
+    // `#[expect(dead_code, ...)]`) until phases 6-8 wire up writes,
+    // viewer assignment, and DELETE-shaped endpoints. Keeping the
+    // shapes here means each future endpoint stays a one-line wrapper.
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -142,6 +143,17 @@ impl ProtectClient {
             .json(body)
             .send()
             .await?;
+        Self::json_response(response).await
+    }
+
+    /// POST with no request body, parsing the JSON response.
+    /// Distinct from [`Self::post_json`] because that helper sets a
+    /// `Content-Type: application/json` body even for `()`, which
+    /// the talkback-session endpoint (and likely future no-body
+    /// POSTs) rejects.
+    pub(crate) async fn post_empty_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        debug!("POST {path} (no body)");
+        let response = self.http_write.post(self.url(path)?).send().await?;
         Self::json_response(response).await
     }
 
@@ -180,7 +192,6 @@ impl ProtectClient {
         Err(Error::from_response(response).await)
     }
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
         let response = self.http_read.get(self.url(path)?).send().await?;

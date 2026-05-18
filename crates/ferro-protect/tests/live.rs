@@ -327,3 +327,130 @@ async fn live_read_chimes_get() {
     );
     assert_eq!(fetched.id, first.id, "list+get should agree on id");
 }
+
+#[tokio::test]
+async fn live_read_cameras_snapshot() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_snapshot: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    let Some(first) = cameras
+        .iter()
+        .find(|c| c.state == ferro_protect::models::DeviceState::Connected)
+    else {
+        println!("(skipping live_read_cameras_snapshot: no online camera on NVR)");
+        return;
+    };
+    let bytes = client
+        .cameras()
+        .snapshot(&first.id)
+        .await
+        .expect("cameras snapshot call succeeded");
+    // Don't snapshot-test the bytes themselves -- camera frames differ on
+    // every call. The contract is "non-empty JPEG"; that's all we assert.
+    assert!(
+        bytes.len() > 3,
+        "snapshot bytes too short to be a JPEG: {} bytes",
+        bytes.len()
+    );
+    assert_eq!(
+        &bytes[..3],
+        &[0xFF, 0xD8, 0xFF],
+        "snapshot does not start with the JPEG SOI magic bytes; got {:02X?}",
+        &bytes[..3]
+    );
+    println!(
+        "live_read_cameras_snapshot: fetched {} bytes from camera {} ({:?})",
+        bytes.len(),
+        first.id,
+        first.name
+    );
+}
+
+#[tokio::test]
+async fn live_read_cameras_rtsps_stream() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_rtsps_stream: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    let Some(first) = cameras
+        .iter()
+        .find(|c| c.state == ferro_protect::models::DeviceState::Connected)
+    else {
+        println!("(skipping live_read_cameras_rtsps_stream: no online camera on NVR)");
+        return;
+    };
+    let streams = client
+        .cameras()
+        .rtsps_stream(&first.id, &[ferro_protect::models::ChannelQuality::High])
+        .await
+        .expect("rtsps_stream call succeeded");
+    assert!(
+        !streams.is_empty(),
+        "expected at least one RTSPS URL for camera {}",
+        first.id
+    );
+    for s in &streams {
+        assert!(
+            s.url.starts_with("rtsps://"),
+            "unexpected URL scheme for quality {:?}: {}",
+            s.quality,
+            s.url
+        );
+        println!(
+            "live_read_cameras_rtsps_stream: camera {} quality={} url_len={}",
+            first.id,
+            s.quality,
+            s.url.len()
+        );
+    }
+}
+
+#[tokio::test]
+async fn live_read_cameras_talkback_session() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_talkback_session: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    // Talkback also requires the camera to have a speaker; many UBV
+    // outdoor models don't. Filter for both online + has_speaker so a
+    // mixed-NVR fleet skips cleanly rather than failing the suite.
+    let Some(first) = cameras.iter().find(|c| {
+        c.state == ferro_protect::models::DeviceState::Connected && c.feature_flags.has_speaker
+    }) else {
+        println!(
+            "(skipping live_read_cameras_talkback_session: no online camera with talkback support)"
+        );
+        return;
+    };
+    let session = client
+        .cameras()
+        .talkback_session(&first.id)
+        .await
+        .expect("talkback_session call succeeded");
+    assert!(
+        session.url.starts_with("ws://") || session.url.starts_with("wss://"),
+        "expected WebSocket URL scheme, got {}",
+        session.url
+    );
+    assert!(!session.codec.is_empty(), "empty codec id");
+    println!(
+        "live_read_cameras_talkback_session: camera {} codec={} sample_rate={} bits={}",
+        first.id, session.codec, session.sampling_rate, session.bits_per_sample
+    );
+}
