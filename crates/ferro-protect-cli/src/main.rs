@@ -164,10 +164,7 @@ enum Command {
         #[command(subcommand)]
         action: commands::viewers::Action,
     },
-    /// Inspect or scaffold the persistent TOML config file. See the
-    /// subcommand's own `--help` for the three actions
-    /// (template/show/path). Hand-edit the file with `$EDITOR` to
-    /// change values — there is no in-CLI editor by design.
+    /// Inspect or scaffold the persistent TOML config file.
     Config {
         #[command(subcommand)]
         action: commands::config::Action,
