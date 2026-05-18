@@ -397,3 +397,40 @@ one level removed from what we actually want to verify.
 - When you encounter a deviation worth remembering later, add an
   entry to PLAN.md's "Deferred — revisit before 0.1.0" section
   (with trigger condition) rather than only leaving a TODO comment.
+
+### Push back on low-utility, high-LOC features
+
+A human can ask you to implement a feature; you can still tell them
+it isn't worth the cost. Before saying "yes" and writing code,
+estimate the trade-off explicitly:
+
+- **End-user utility**: who actually benefits, in what scenario, and
+  how often? Bonus: would an existing tool (`rm`, `$EDITOR`, `--help`,
+  `complete`) already cover most of it?
+- **LOC cost**: code + tests + docs + any new dependencies. New deps
+  amplify the cost — each one brings supply-chain surface,
+  compile-time, and `cargo deny` review weight.
+- **Risk surface**: does this touch secrets, files, network, or other
+  unrecoverable state? Risky code is more expensive per line.
+
+If utility is low *and* LOC is high *and/or* risk is non-trivial,
+push back. State the trade-off in concrete terms ("this is ~N lines
+plus dep X, the alternative `$EDITOR foo` covers 90% of the cases").
+Offer an alternative (drop it, defer it, paper it with docs).
+
+Examples of the kind of pushback that's expected:
+
+- "We could add a `delete` subcommand, but `rm` already does this.
+  About 30 lines of code plus a confirmation prompt plus
+  `is-terminal`. I'd skip it."
+- "Format-preserving config edits need `toml_edit`'s DOM types and
+  ~200 LOC. `$EDITOR config.toml` covers 95% of the workflow.
+  Recommend dropping unless someone has shown they need it."
+- "This adds a derive macro to deduplicate three struct definitions.
+  It saves ~40 lines but creates a macro that needs to track every
+  divergence in clap/serde annotations. Net negative — keep the
+  duplication."
+
+The human gets the final call. But surface the trade-off *before*
+writing the code, not after. Implementing first and then proposing a
+simplification afterwards burns LOC on both sides.
