@@ -55,7 +55,8 @@ pub enum Action {
     },
     /// Print the resolved config file path on a single line. Useful in
     /// shell scripts (`$(ferro-protect config path)`). `--json` emits
-    /// `{path, exists}`.
+    /// `{"path": "..."}`. Errors when the file is missing, so an
+    /// `exists` field would always be `true` and was dropped.
     Path,
     /// Set or unset a single field in the config file. Preserves
     /// comments and formatting via `toml_edit`. Refuses to set
@@ -907,7 +908,7 @@ where
                 |_| Ok(()),
             )?;
             let key = prompt_secret("Paste the API key (hidden)")?;
-            write_key_file(Path::new(&expand_tilde(&path)), key.expose_secret())?;
+            write_key_file(&config::expand_tilde(Path::new(&path)), key.expose_secret())?;
             Some(path)
         }
         KeyChoice::EmbedRaw | KeyChoice::Skip => None,
@@ -1081,13 +1082,4 @@ fn write_key_file(path: &Path, key: &str) -> Result<(), ConfigCmdError> {
         });
     }
     Ok(())
-}
-
-fn expand_tilde(p: &str) -> PathBuf {
-    if let Some(rest) = p.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(rest);
-    }
-    PathBuf::from(p)
 }

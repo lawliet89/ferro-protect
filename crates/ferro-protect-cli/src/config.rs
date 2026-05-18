@@ -349,11 +349,20 @@ where
         }
     };
 
-    let file: ConfigFile = toml_edit::de::from_str(&raw).map_err(|e| ConfigError::Parse {
+    let mut file: ConfigFile = toml_edit::de::from_str(&raw).map_err(|e| ConfigError::Parse {
         path: path.clone(),
         source: e,
     })?;
     file.validate()?;
+    // Normalise tilde-paths once at load time so every downstream
+    // consumer (`api_key::resolve`, `config show`, etc.) sees an
+    // absolute path. TOML is not a shell, so `~/...` isn't expanded by
+    // the parser. The wizard's "write key to file" suggestion uses
+    // `~/.config/ferro-protect/api_key`, which would otherwise be
+    // written through verbatim and fail `read_to_string` at runtime.
+    if let Some(p) = file.api_key_file.take() {
+        file.api_key_file = Some(expand_tilde(&p));
+    }
 
     log::debug!(
         "config: loaded from {} (via {})",
@@ -361,6 +370,29 @@ where
         source.as_user_hint(),
     );
     Ok(Some(LoadedConfig { file, path, source }))
+}
+
+/// Replace a leading `~/` (or bare `~`) with `$HOME`.
+///
+/// Unix-shell-style expansion only; `~user` is *not* honoured. Returns
+/// the path unchanged on Windows, when `HOME` is unset, or when the
+/// path doesn't start with `~`. Public so the wizard can keep its
+/// write-side expansion in sync with the load-side one.
+#[must_use]
+pub fn expand_tilde(p: &Path) -> PathBuf {
+    let Some(s) = p.to_str() else {
+        return p.to_path_buf();
+    };
+    let Some(home) = std::env::var_os("HOME") else {
+        return p.to_path_buf();
+    };
+    if let Some(rest) = s.strip_prefix("~/") {
+        return PathBuf::from(home).join(rest);
+    }
+    if s == "~" {
+        return PathBuf::from(home);
+    }
+    p.to_path_buf()
 }
 
 /// Flag inputs to [`resolve`]. Decoupled from the clap-derived `Cli`
