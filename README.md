@@ -94,11 +94,11 @@ Runs everything: unit tests, mocked integration tests (against an in-process
 when absent. So this command is safe and useful on any machine, NVR or not.
 
 `cargo test --all` against a real NVR works under default parallelism --
-the client ships with a proactive rate limiter that reads the server's
-RFC 9331 `RateLimit-Policy` header (Protect 7.1.60 advertises
-`10-in-1sec`) and a retry middleware that honours `Retry-After` on
-429s. You should not need `--test-threads=N`; if you hit 429s
-anyway, file an issue.
+the client ships with a proactive rate limiter pinned to Protect's
+advertised quota (`10-in-1sec` on 7.1.60, configurable via
+`ProtectClientBuilder::rate_limit`) and a retry middleware that honours
+`Retry-After` on 429s. You should not need `--test-threads=N`; if you
+hit 429s anyway, file an issue.
 
 ### How to run live tests
 

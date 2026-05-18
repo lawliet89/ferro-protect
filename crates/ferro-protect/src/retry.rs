@@ -9,8 +9,10 @@
 //! than guessing.
 //!
 //! Behaviour:
-//! - **429 Too Many Requests** -> retry with `Retry-After` if present
-//!   (capped at `max_backoff`), else exponential backoff.
+//! - **429 Too Many Requests** -> retry with `Retry-After` if present,
+//!   honoured verbatim (not capped at `max_backoff` -- the whole point
+//!   of this layer is to do what the server asked). When no header is
+//!   present, fall back to exponential backoff.
 //! - **5xx Server Error / 408 Request Timeout** -> retry with
 //!   exponential backoff and jitter between `initial_backoff` and
 //!   `max_backoff`.
@@ -109,7 +111,11 @@ impl RetryAfterAwareMiddleware {
                         .and_then(|s| s.trim().parse::<u64>().ok())
                         .map(Duration::from_secs);
                     if let Some(d) = from_header {
-                        return Some(d.min(self.max_backoff));
+                        // Honour the server's hint verbatim. `max_backoff`
+                        // applies to the exponential schedule only; capping
+                        // here would mean we retry earlier than the server
+                        // told us to, which defeats the point of this layer.
+                        return Some(d);
                     }
                     return Some(self.backoff_for(attempt_just_finished));
                 }

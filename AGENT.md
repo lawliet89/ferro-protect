@@ -79,6 +79,24 @@ git submodule update --init --recursive
 - Only commit when explicitly asked. Do not push unless explicitly
   asked. Never force-push.
 
+## GitHub comments — identify the LLM
+
+When posting on GitHub via `gh` (PR comments, issue comments, review
+replies) you are authenticating as the human repo owner. **Lead every
+comment** with a one-line attribution naming the model that wrote it,
+so reviewers and historians can tell agent output from human output.
+
+- Format: `> _Posted by Claude Opus 4.7 via gh CLI (authenticated as
+  the repo owner)._`
+- Use the actual model name and version you are running as. If unsure,
+  default to "Claude" and the model family.
+- Applies to: `gh pr comment`, `gh pr review`, `gh issue comment`,
+  inline review-thread replies via `gh api .../comments/{id}/replies`,
+  and anywhere else a comment is created under the owner's identity.
+- Does **not** apply to commit messages or PR descriptions (those
+  already get a `Co-Authored-By: Claude` trailer / "Generated with
+  Claude Code" footer).
+
 ## PGP signing — non-negotiable
 
 The user has commit signing configured and may require a passphrase.

@@ -1,5 +1,16 @@
 # Chore: client-side rate limiting and 429 retry
 
+> **Status: superseded.** The proactive throttle landed first as a
+> hand-rolled adaptive `tokio::sync::Semaphore` per this plan (see
+> PROGRESS.md 2026-05-17 18:06), then was rewritten on top of
+> [`governor`](https://crates.io/crates/governor) in PR #8 / PROGRESS.md
+> 2026-05-18 17:06. The retry middleware shipped as-planned and is
+> unchanged. Anything below describing `AdaptiveLimiter`, `observe()`,
+> runtime header-driven capacity growth, or the `RateLimit-Policy`
+> contract on the proactive layer reflects the **superseded plan**, not
+> the shipped code. See `ARCHITECTURE.md` "Rate limiting and retries"
+> for the current design.
+
 ## Why
 
 Running the live test suite against a real NVR currently fails several
@@ -384,9 +395,12 @@ one-logical-step-per-commit pattern already in use.
 
 - `ProtectClient` retries 429 and 503 transparently up to a
   configurable bound, honouring `Retry-After` when present.
-- `ProtectClient` reads the RFC 9331 `RateLimit` headers from every
-  response and adapts an internal throttle so the suite of in-process
-  callers cannot exceed the server's advertised budget.
+- `ProtectClient` ships a proactive throttle (default: 10/1s, matching
+  Protect 7.1.60's advertised `RateLimit-Policy`) so the suite of
+  in-process callers cannot exceed the server's budget. *(Originally
+  planned as an adaptive limiter that reads `RateLimit` headers and
+  grows capacity; landed as fixed `governor` quota -- see top-of-file
+  note.)*
 - **Both retry and proactive throttle are on by default.** A user
   calling `ProtectClient::builder().host(...).api_key(...).build()`
   with no other knob calls gets both behaviours.

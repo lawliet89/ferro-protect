@@ -5,14 +5,15 @@
     reason = "test files prioritise clarity over pedantic style"
 )]
 
-//! End-to-end behaviour of the retry middleware + adaptive rate limiter
-//! against a `wiremock` server. Exercises three properties of the
-//! contract documented in `docs/TASK_rate_limit.md`:
+//! End-to-end behaviour of the retry middleware + governor-backed GCRA
+//! rate limiter against a `wiremock` server. Exercises three properties
+//! of the contract:
 //!
 //! 1. 429 with `Retry-After` is transparently retried and succeeds.
 //! 2. The retry middleware bounds attempts at `max_retries`.
-//! 3. The proactive throttle stops a burst of requests from exceeding
-//!    the advertised quota even without server-side 429s.
+//! 3. The proactive throttle paces a burst of requests so the total
+//!    rate stays at or below the configured quota, even without
+//!    server-side 429s.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;

@@ -41,7 +41,7 @@ prettyplease = "0.2"
 is-terminal = "0.4"
 insta = { version = "1", features = ["json"] }
 tempfile = "3"
-governor = { version = "0.10", default-features = false, features = ["std", "quanta"] }
+governor = { version = "0.10", default-features = false, features = ["std"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

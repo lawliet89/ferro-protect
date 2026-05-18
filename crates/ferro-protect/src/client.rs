@@ -86,10 +86,12 @@ impl Default for RetryConfig {
 pub struct ProtectClient {
     /// Used for idempotent reads (GET). Always wraps the retry middleware.
     http_read: ClientWithMiddleware,
-    /// Used for mutations (POST/PATCH/DELETE/...). Goes through the retry
-    /// middleware only when `retry_on_mutations` is set; otherwise it is
-    /// a plain `reqwest::Client` wrapped without middleware so failing
-    /// writes surface immediately rather than getting silently re-applied.
+    /// Used for mutations (POST/PATCH/DELETE/...). Bypasses the retry
+    /// middleware by default so a transient 5xx after the server already
+    /// applied the change is not silently re-fired; opt back in with
+    /// `ProtectClientBuilder::retry_on_mutations(true)`. The rate-limit
+    /// middleware is still applied so writes count against the same
+    /// shared budget as reads.
     http_write: ClientWithMiddleware,
     base_url: Url,
 }
