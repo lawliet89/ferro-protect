@@ -796,3 +796,81 @@ high-payoff for this codebase:
 
 **Next**: Phase 4c (lights read endpoints). Edition bump is
 unblocking, not a precondition.
+
+## 2026-05-18 17:06 +0800 — Chore: replace adaptive rate limiter with `governor` (GCRA)
+
+**Status**: complete (merged into `rate-limit` branch ahead of PR #6
+landing; not yet on `main`)
+
+**Summary**:
+Rewrote the proactive throttle layer of the rate-limit chore (entry
+above dated 2026-05-17 18:06) on top of the [`governor`] crate. The
+hand-rolled `tokio::sync::Semaphore` + per-permit `tokio::spawn` +
+`RateLimit-Policy` observer was a strict complexity loss for the
+problem we actually have: Protect's advertised quota has not moved
+across observed firmware, so the runtime auto-tuning machinery was
+solving a non-problem. `governor`'s GCRA (a leaky-bucket variant)
+also matches the server's likely enforcement algorithm, so after a
+burst the client paces requests out smoothly rather than releasing
+the next batch in a synchronous pulse when the window rolls over.
+
+The reactive retry layer ([`src/retry.rs`]) is untouched. Middleware
+stacking order is preserved: rate limiter inside retry, single
+limiter shared across `http_read` / `http_write`.
+
+[`governor`]: https://crates.io/crates/governor
+[`src/retry.rs`]: crates/ferro-protect/src/retry.rs
+
+**Files added/changed**:
+- `crates/ferro-protect/src/rate_limit.rs` (329 -> 108 lines; replaced
+  `AdaptiveLimiter` + `parse_ratelimit_policy` + observer with a thin
+  `governor::RateLimiter<NotKeyed>` wrapper)
+- `crates/ferro-protect/src/client.rs` (builder threads
+  `Result<RateLimitMiddleware>` through `build()`; log label updated)
+- `crates/ferro-protect/tests/rate_limit.rs` (one field-name update on
+  the burst-cap integration test)
+- `Cargo.toml`, `crates/ferro-protect/Cargo.toml` (workspace dep
+  `governor = "0.10"`, MIT, `cargo deny` clean)
+- `Cargo.lock` (governor + transitive: `quanta`, `nonzero_ext`,
+  `futures-timer`, etc.)
+
+**Decisions / deviations**:
+- **`RateLimitConfig` field shape changed**: `{ initial_capacity: u32,
+  window: Duration }` -> `{ rate: NonZeroU32, per: Duration }`. The
+  word "initial" no longer fit (`governor` does not adapt at runtime)
+  and `NonZeroU32` is what `Quota` takes natively, so leaning into the
+  type. Pre-0.1.0 with no published consumers; no migration alias.
+- **`RateLimitMiddleware::new` is fallible**: returns `Result<Self>`.
+  A `per/rate` cell period that rounds down to zero (sub-nanosecond
+  pacing) surfaces as `Error::Other` via the builder's existing
+  `Result` return. The previous draft of this commit had two
+  `.expect()` panics there; one was unreachable (divisor is
+  `NonZeroU32`), the other was reachable for `per=Duration::ZERO` or
+  `per` in nanos < `rate`. Surfaced as a normal builder error
+  instead of a panic at `client.build()`.
+- **Adaptive growth dropped**: no `observe()` of `RateLimit-Policy`
+  headers. The 8 unit tests covering the parser and observer were
+  deleted (75 total tests now, was 83). End-to-end behaviour is
+  covered by `tests/rate_limit.rs::proactive_throttle_caps_burst_to_configured_capacity`,
+  which still exercises the burst-then-pace path through wiremock.
+- **No unit tests for the new module**: governor uses its own
+  monotonic clock (`quanta`), which `#[tokio::test(start_paused =
+  true)]` cannot stub. The integration test in `tests/rate_limit.rs`
+  uses real time + wiremock and catches the same regressions; an
+  inline unit test would either be unreliable or test governor's
+  internals, neither of which is useful here.
+- **`rand` dependency retained**: review feedback suggested removing
+  it after the limiter rewrite, but `retry.rs` still uses it for
+  backoff jitter (`rand::thread_rng().gen_range(...)`). The
+  suggestion was conditional ("if nothing else uses it"); not met.
+- **Floor vs ceil division for `cell_period`**: review suggested
+  ceiling division so the effective rate never exceeds the configured
+  rate. For `rate=3, per=1s` the difference is `333_333_333` ns vs
+  `333_333_334` ns — three orders of magnitude below typical network
+  jitter and below the precision the server's own leaky bucket runs
+  at. Not worth complicating the call site for an unobservable
+  benefit.
+
+**Next**: Phase 4c (lights read endpoints) remains the next code
+work item. PR #6 still needs to land into `main`; this chore tightens
+the implementation that PR ships.
