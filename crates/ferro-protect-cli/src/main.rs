@@ -200,7 +200,7 @@ async fn run(cli: Cli) -> Result<()> {
         json: cli.json,
         log_level: cli.log_level,
     };
-    let resolved = config::resolve(&flags, loaded.as_ref(), &env);
+    let resolved = config::resolve(&flags, loaded.as_ref(), &env)?;
 
     // Init logging *after* config load so the file's `log_level` can
     // act as a fallback when neither --log-level nor UNIFI_PROTECT_LOG
