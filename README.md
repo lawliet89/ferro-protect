@@ -124,7 +124,9 @@ CI jobs — anywhere argv is awkward to control. Distinguish this from
 host = "nvr.local"
 # base_url = "https://nvr.local/proxy/protect/integration"
 
-# Preferred: pointer to a separate key file (tilde-expanded at load time).
+# Preferred: pointer to a separate key file. A leading `~/` is expanded
+# at load time using `$HOME`; on Windows that variable is usually unset,
+# so prefer an absolute path there.
 api_key_file = "~/.config/ferro-protect/api_key"
 # Discouraged alternative: raw key inline. `chmod 600` the file
 # yourself; the loader treats it as a last-resort source.

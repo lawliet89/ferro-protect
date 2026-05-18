@@ -476,7 +476,7 @@ fn load_expands_tilde_in_api_key_file_so_runtime_can_read_it() {
 // ----------------- precedence + cross-source mutual exclusion -----------------
 
 #[test]
-fn precedence_flag_wins_over_env_and_file_in_show() {
+fn precedence_env_wins_over_file_in_show() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), "host = \"file-host\"\n").expect("write");
