@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! `client.nvrs().get()` against a mock NVR. Unlike most entities,
 //! `GET /v1/nvrs` returns a single object (not a list); see `src/nvrs.rs`

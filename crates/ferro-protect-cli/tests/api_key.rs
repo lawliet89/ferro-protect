@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! Unit-style tests for the API-key resolver.
 //!
@@ -192,7 +196,6 @@ fn binary_rejects_when_no_key_provided() {
 
 // Silence the unused-import warning on non-Unix where the chmod tests are
 // cfg'd out.
-#[allow(dead_code)]
 fn _ensure_write_in_scope() {
     let mut v: Vec<u8> = Vec::new();
     let _ = v.write(b"");

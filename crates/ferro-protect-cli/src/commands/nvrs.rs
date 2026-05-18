@@ -3,8 +3,8 @@
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use ferro_protect::models::Nvr;
 use ferro_protect::ProtectClient;
+use ferro_protect::models::Nvr;
 
 use crate::output;
 

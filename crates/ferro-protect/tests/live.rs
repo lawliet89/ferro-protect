@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! Live integration tests. Run as part of the normal `cargo test --all`
 //! suite -- when `UNIFI_PROTECT_HOST` is unset they early-return and
