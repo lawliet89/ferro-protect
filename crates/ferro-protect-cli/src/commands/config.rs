@@ -33,19 +33,15 @@ pub enum Action {
     /// Print the effective resolved configuration, with each value
     /// annotated by its source (env / config file / default).
     ///
-    /// Per-invocation global flags (`--host`, `--insecure`, …) are
-    /// **not** reflected -- they would show `source = flag` for the
-    /// current invocation only, which is misleading as "the effective
-    /// config". `--config` is the only global flag honoured here (it
-    /// picks *which* file to inspect). The full
-    /// flag-wins-over-env-wins-over-file precedence is still applied
-    /// when the binary runs a real command like `info` or
-    /// `cameras list`.
+    /// Only `--config` is honoured here (to pick which file to
+    /// inspect). Other per-invocation flags like `--host` or
+    /// `--insecure` are ignored — they would only be true for this
+    /// invocation. The usual flag > env > file > default precedence
+    /// still applies to real commands like `info`.
     ///
-    /// Note: `log_level` reflects only the `log_level` config field.
-    /// Runtime logging is *additionally* filtered by `UNIFI_PROTECT_LOG`
-    /// and `RUST_LOG` (env_logger filter syntax, not enum values), which
-    /// are independent of this field and not surfaced here.
+    /// `log_level` reflects only the `log_level` config field;
+    /// `UNIFI_PROTECT_LOG` / `RUST_LOG` further filter the runtime
+    /// logger (env_logger syntax) and are not shown here.
     ///
     /// Pass a single KEY to print only that field's value (scriptable).
     /// `--json` switches to a structured `{value, source}` form.
