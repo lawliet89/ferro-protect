@@ -7,7 +7,8 @@
 
 //! End-to-end CLI tests for `ferro-protect liveviews …` against wiremock.
 
-use assert_cmd::Command;
+mod common;
+
 use predicates::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -16,8 +17,7 @@ const FIXTURE_EMPTY_LIST: &str = "[]";
 const FIXTURE_NOT_FOUND: &str = r#"{"name":"notFound","error":"Liveview with id 'abc' not found"}"#;
 
 fn run_cmd(base_url: &str, args: &[&str]) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("ferro-protect")
-        .expect("binary built")
+    common::isolated_cmd()
         .env("UNIFI_PROTECT_API_KEY", "test-key")
         .env_remove("UNIFI_PROTECT_API_KEY_FILE")
         .env_remove("UNIFI_PROTECT_HOST")

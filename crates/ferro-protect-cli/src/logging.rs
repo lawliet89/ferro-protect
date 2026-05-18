@@ -14,8 +14,53 @@
 
 use std::io::Write;
 
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
+
 const APP_ENV: &str = "UNIFI_PROTECT_LOG";
 const DEFAULT_FILTER: &str = "warn";
+
+/// Log-level choice. Used by both the `--log-level` clap value-enum
+/// and the `log_level` key in the config file.
+///
+/// Lowercase wire form so both surfaces accept the same set of strings:
+/// `error`, `warn`, `info`, `debug`, `trace`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    #[must_use]
+    pub const fn as_filter(self) -> log::LevelFilter {
+        match self {
+            Self::Error => log::LevelFilter::Error,
+            Self::Warn => log::LevelFilter::Warn,
+            Self::Info => log::LevelFilter::Info,
+            Self::Debug => log::LevelFilter::Debug,
+            Self::Trace => log::LevelFilter::Trace,
+        }
+    }
+
+    /// Wire-form string, matching the clap `ValueEnum` derive
+    /// (lowercase). Used by `config show` and `config edit` to emit /
+    /// accept the same vocabulary as `--log-level`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+}
 
 /// Initialize the global logger.
 ///

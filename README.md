@@ -79,6 +79,106 @@ ln -s ../../scripts/pre-commit .git/hooks/pre-commit
 chmod +x scripts/pre-commit
 ```
 
+## Configuration
+
+The CLI reads its configuration from up to four sources, in this
+priority order (highest first):
+
+1. **Command-line flag** — e.g. `--host nvr.local`.
+2. **Environment variable** — e.g. `UNIFI_PROTECT_HOST=nvr.local`.
+3. **TOML config file** — see below.
+4. **Built-in default**.
+
+### Config file location
+
+By default the CLI looks at
+`$XDG_CONFIG_HOME/ferro-protect/config.toml`, falling back to
+`$HOME/.config/ferro-protect/config.toml` if `XDG_CONFIG_HOME` is unset.
+On Windows the path is `%APPDATA%\ferro-protect\config.toml`.
+
+You can point at a different file two ways, in priority order:
+
+1. `--config <PATH>` flag.
+2. `UNIFI_PROTECT_CONFIG_FILE=<PATH>` env var.
+
+The flag and the env var are **authoritative**: pointing either at a
+missing file is a hard error. The XDG default is **opportunistic**: a
+missing file at that path just means "no config", which is fine.
+
+The env var name mirrors `UNIFI_PROTECT_API_KEY_FILE` — the `_FILE`
+suffix consistently means "path to a file" (as opposed to a raw
+value).
+
+### Pointing at a config file from a deployment
+
+`UNIFI_PROTECT_CONFIG_FILE=/etc/ferro-protect/config.toml` is the right
+hook for systemd units, Docker `ENV` directives, k8s ConfigMaps, and
+CI jobs — anywhere argv is awkward to control. Distinguish this from
+`UNIFI_PROTECT_API_KEY_FILE`, which points at a *key* file, not a
+*config* file.
+
+### Format
+
+```toml
+# Either set host or base_url, not both. host is the common case.
+host = "nvr.local"
+# base_url = "https://nvr.local/proxy/protect/integration"
+
+# Preferred: pointer to a separate key file (tilde-expanded at load time).
+api_key_file = "~/.config/ferro-protect/api_key"
+# Discouraged alternative: raw key inline. The wizard chmods the file
+# 0600 and warns loudly; the loader treats it as a last-resort source.
+# api_key = "..."
+
+insecure = false
+json = false
+log_level = "warn"  # one of: error, warn, info, debug, trace
+```
+
+Unknown keys are rejected at load time (typo guard). Setting both
+`host` and `base_url`, or both `api_key` and `api_key_file`, is also
+rejected.
+
+### Managing the config file
+
+```sh
+ferro-protect config init           # interactive wizard (TTY required)
+ferro-protect config show           # print effective config + source per field
+ferro-protect config show host      # bare value, scriptable
+ferro-protect config show --json    # JSON form, with per-field {value, source}
+ferro-protect config path           # print the resolved config file path
+ferro-protect config edit host nvr.local   # set a single field; preserves comments
+ferro-protect config edit host --unset     # remove a field
+```
+
+`config edit` refuses to set `api_key` from the command line — the raw
+key would land in shell history, `ps`, and the parent process's argv.
+Use `config init` (hidden paste), `api_key_file` (point at a key
+file), or the env var instead. `config edit api_key_file <PATH>` is
+fine.
+
+### Config files and the test suite
+
+The library's **live tests are env-driven, not config-driven**, on
+purpose. Running `cargo test --all` with a populated
+`~/.config/ferro-protect/config.toml` but no sourced `.env.local`
+results in live tests **skipping** — they will not silently hit your
+real NVR just because a config file exists.
+
+CLI integration tests isolate themselves from the developer's config
+via `HOME=<tmpdir>` + scrubbed `UNIFI_PROTECT_*` env vars (see
+`crates/ferro-protect-cli/tests/common/mod.rs`). To run live tests
+with a config-file-only setup, source `.env.local` or set
+`UNIFI_PROTECT_HOST` plus an API-key source in the environment first.
+
+### Security notes
+
+When you embed a raw `api_key` in `config.toml`, the wizard chmods the
+file `0600` on Unix. If you hand-edit, you should too. The loader
+emits a stderr warning if a referenced key file has lax permissions.
+
+A future option would be keyring-backed storage; not built today.
+
 ## Running tests
 
 ### Quick start

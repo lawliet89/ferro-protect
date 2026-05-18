@@ -11,7 +11,8 @@
 //! The key is passed via `UNIFI_PROTECT_API_KEY` (one of the three
 //! resolver sources -- see `crates/ferro-protect-cli/src/api_key.rs`).
 
-use assert_cmd::Command;
+mod common;
+
 use predicates::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -34,8 +35,7 @@ async fn info_prints_application_version() {
 
     let base_url = server.uri();
     let assert = tokio::task::spawn_blocking(move || {
-        Command::cargo_bin("ferro-protect")
-            .expect("binary built")
+        common::isolated_cmd()
             .env("UNIFI_PROTECT_API_KEY", "test-key")
             .env_remove("UNIFI_PROTECT_API_KEY_FILE")
             .args(["--base-url", &base_url, "info"])
@@ -63,8 +63,7 @@ async fn info_json_flag_emits_json() {
 
     let base_url = server.uri();
     let assert = tokio::task::spawn_blocking(move || {
-        Command::cargo_bin("ferro-protect")
-            .expect("binary built")
+        common::isolated_cmd()
             .env("UNIFI_PROTECT_API_KEY", "test-key")
             .env_remove("UNIFI_PROTECT_API_KEY_FILE")
             .args(["--base-url", &base_url, "--json", "info"])

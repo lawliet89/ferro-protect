@@ -874,3 +874,95 @@ limiter shared across `http_read` / `http_write`.
 **Next**: Phase 4c (lights read endpoints) remains the next code
 work item. PR #6 still needs to land into `main`; this chore tightens
 the implementation that PR ships.
+
+## 2026-05-18 20:11 +0800 — Chore: TOML config file + interactive `config` subcommand
+
+**Status**: complete
+
+**Summary**:
+Added a persistent on-disk config (`$XDG_CONFIG_HOME/ferro-protect/config.toml`,
+TOML) plus a `ferro-protect config {init,show,edit,path}` subcommand.
+Field-level precedence is **flag > env > file > default**; file-discovery
+precedence (which file the loader opens) is independently
+`--config > UNIFI_PROTECT_CONFIG_FILE > XDG default`. The plan lives at
+`docs/TASK_config_file.md`; this entry captures what landed vs the plan
+and a couple of deliberate scoping calls.
+
+**Files added/changed**:
+- `Cargo.toml` (workspace deps: `toml_edit`, `etcetera`, `rpassword`,
+  `dialoguer`; secrecy gains the `serde` feature).
+- `crates/ferro-protect-cli/Cargo.toml` (consumes the new deps).
+- `crates/ferro-protect-cli/src/config.rs` (new — `ConfigFile`,
+  `load`, `resolve`, `ResolvedConfig`, per-field `FieldSource`).
+- `crates/ferro-protect-cli/src/commands/config.rs` (new — four actions).
+- `crates/ferro-protect-cli/src/api_key.rs` (resolver grows a `Sources`
+  struct and two lower-priority config-file fallbacks; returns
+  `(SecretString, ApiKeySource)` so `config show` can attribute the key
+  without re-reading it).
+- `crates/ferro-protect-cli/src/logging.rs` (moved `LogLevel` here from
+  `main.rs`; now derives both `clap::ValueEnum` and `serde::Deserialize`
+  so `--log-level` and the `log_level` config key share a vocabulary).
+- `crates/ferro-protect-cli/src/main.rs` (drops `env =` from global
+  flags so source attribution becomes possible; wires `config::load` +
+  `resolve` into the run path; adds `--config <PATH>`).
+- `crates/ferro-protect-cli/tests/common/mod.rs` (new — shared
+  isolation helpers).
+- `crates/ferro-protect-cli/tests/cli_config.rs` (new — 23 tests).
+- `crates/ferro-protect-cli/tests/*.rs` (existing files migrated to use
+  `common::isolated_cmd()` so a developer's own
+  `~/.config/ferro-protect/config.toml` cannot leak into assert_cmd
+  tests).
+- `README.md` ("Configuration" section, ~100 lines).
+- `.env.example` (one-paragraph precedence note).
+- `docs/TASK_config_file.md` (plan; committed earlier in this branch as
+  `76d48b1` + amendment `8761c5e`).
+
+**Decisions / deviations**:
+- **Live tests stay env-driven, not config-driven.** A developer with a
+  populated `config.toml` but no sourced `.env.local` sees `cargo test
+  --all` skip live tests rather than hit their real NVR. Teaching the
+  library's `live_client()` helper to also read the config file would
+  either layer-violate (library depending on the CLI crate) or
+  duplicate the TOML parser into library dev-deps. Documented in the
+  README's "Config files and the test suite" subsection.
+- **`config show` ignores per-invocation flag overrides on purpose.**
+  Reflecting them would mean `config show --insecure` claims
+  `insecure = Flag`, which is true for *that invocation* only and
+  misleading as "the effective config". `config show` reports the file
+  + env composition; flags are inherently per-call.
+- **`toml_edit` preferred over `toml`.** `toml` 1.x is built on
+  `toml_edit` internally, so the dep cost of using `toml_edit` directly
+  is negligible. Buys format-preserving round-trips for `config edit`,
+  which means the wizard's header comment and any user-added inline
+  comments survive subsequent edits. Discussed with user before
+  picking.
+- **`config edit` refuses to set `api_key` from argv.** The raw key
+  would land in shell history, `ps`, and the parent's argv. Error
+  points the user at `config init`, `api_key_file`, or the env var.
+  `config edit api_key_file <PATH>` is fine; paths are not secrets.
+- **`--config <PATH>` flag does NOT carry `env =` in clap.** The env
+  lookup happens explicitly in `config::resolve_path` so the two-axis
+  precedence story (file-discovery vs field-level) stays separable
+  rather than tangled through clap's matchers.
+- **`--insecure` / `--json` now use `require_equals = true` + optional
+  value.** Before this chore they were plain `bool` with `env =` and
+  `default_value_t = false`, which prevented "not passed" from being
+  distinguishable from "explicit false". Now they're `Option<bool>`
+  with `--json=true` / `--json=false` syntax; bare `--json` still
+  means `Some(true)` (default_missing_value). The `require_equals`
+  prevents the next positional argument from being consumed as the
+  flag's value.
+- **`UNIFI_PROTECT_JSON` env var added** for completeness with the
+  precedence story. Was not honored before this chore (the `--json`
+  flag had no `env =`).
+- **CLI integration tests migrated to `common::isolated_cmd()`** via
+  a mechanical script. Each existing test had `Command::cargo_bin
+  ("ferro-protect").expect("binary built")` replaced and gained
+  `mod common;`. The `use assert_cmd::Command` import was dropped
+  where it became unused. Migration was prompted by the realization
+  that a developer who later runs `ferro-protect config init` would
+  otherwise have their personal config silently leak into every
+  assert_cmd test.
+
+**Next**: Plan's phase 5 (binary endpoints) is the next code work
+item. PR for this chore needs to land into `main`.
