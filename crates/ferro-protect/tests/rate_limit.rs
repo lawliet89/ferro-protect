@@ -6,7 +6,7 @@
 )]
 
 //! End-to-end behaviour of the retry middleware + governor-backed GCRA
-//! rate limiter against a `wiremock` server. Exercises three properties
+//! rate limiter against a `wiremock` server. Exercises four properties
 //! of the contract:
 //!
 //! 1. 429 with `Retry-After` is transparently retried and succeeds.
@@ -14,6 +14,9 @@
 //! 3. The proactive throttle paces a burst of requests so the total
 //!    rate stays at or below the configured quota, even without
 //!    server-side 429s.
+//! 4. The rate limiter runs on *every* retry attempt, not just the
+//!    first — i.e. the middleware ordering puts the limiter inside
+//!    the retry layer.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -124,6 +127,82 @@ async fn retry_budget_exhausts_and_surfaces_429() {
         Error::Api { status: 429, .. } => {}
         other => panic!("expected Api 429 after retries, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn rate_limiter_runs_on_every_retry_attempt() {
+    // Layer-ordering check: `RateLimitMiddleware` is stacked *inside*
+    // the retry middleware, so a retried request must re-acquire a
+    // permit. With `Retry-After: 0` on the first response, any wall-
+    // clock delay observed for the second attempt is attributable to
+    // the limiter, not to the retry backoff. If the ordering ever
+    // gets accidentally flipped, this test fails because the second
+    // attempt would fire immediately.
+    let server = MockServer::start().await;
+
+    struct First429ThenOkNoWait {
+        calls: Arc<AtomicUsize>,
+    }
+    impl Respond for First429ThenOkNoWait {
+        fn respond(&self, _: &Request) -> ResponseTemplate {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                ResponseTemplate::new(429)
+                    .set_body_string(FIXTURE_429)
+                    .insert_header("content-type", "application/json")
+                    .insert_header("retry-after", "0")
+            } else {
+                ResponseTemplate::new(200)
+                    .set_body_string(FIXTURE_OK)
+                    .insert_header("content-type", "application/json")
+            }
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("GET"))
+        .and(path("/v1/meta/info"))
+        .respond_with(First429ThenOkNoWait {
+            calls: Arc::clone(&calls),
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    // Burst of 1, refilling at 1 per 300ms. First request consumes the
+    // burst; the retry must wait ~300ms before its permit is available.
+    let client = ProtectClient::builder()
+        .base_url(server.uri())
+        .api_key(SecretString::from("test-key".to_string()))
+        .rate_limit(Some(RateLimitConfig {
+            rate: NonZeroU32::new(1).expect("1 is non-zero"),
+            per: Duration::from_millis(300),
+        }))
+        .retry(RetryConfig {
+            max_retries: 1,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+        })
+        .build()
+        .expect("client builds");
+
+    let started = Instant::now();
+    let info = client.info().await.expect("retry recovers from 429");
+    let elapsed = started.elapsed();
+
+    assert_eq!(info.application_version.to_string(), "7.1.60");
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "exactly one retry");
+    // The retry waited on the limiter, not on `Retry-After`/backoff.
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "retry should wait for next limiter permit (~300ms), got {elapsed:?}"
+    );
+    // Sanity upper bound -- if this blows out, something other than
+    // the limiter is delaying the retry.
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "retry waited too long for limiter ({elapsed:?})"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

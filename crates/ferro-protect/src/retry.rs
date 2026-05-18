@@ -1,7 +1,7 @@
 //! Custom retry middleware that honours the `Retry-After` response
 //! header.
 //!
-//! `reqwest-retry`'s built-in [`RetryTransientMiddleware`] knows what
+//! `reqwest-retry`'s built-in `RetryTransientMiddleware` knows what
 //! *kinds* of responses are retriable but ignores the server's
 //! `Retry-After` hint, falling back to its own exponential schedule.
 //! UniFi Protect returns `retry-after: 1` on 429, so respecting it
