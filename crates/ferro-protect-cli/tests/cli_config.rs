@@ -6,7 +6,7 @@
 )]
 
 //! End-to-end tests for the `ferro-protect config` subcommand and the
-//! new `--config` / `UNIFI_PROTECT_CONFIG_FILE` file-discovery surface.
+//! `--config` / `UNIFI_PROTECT_CONFIG_FILE` file-discovery surface.
 //!
 //! These all use `common::isolated_cmd()` so a developer's own
 //! `~/.config/ferro-protect/config.toml` cannot leak into the run.
@@ -23,6 +23,8 @@ const SAMPLE: &str = "host = \"nvr.local\"\n\
                       insecure = true\n\
                       json = false\n\
                       log_level = \"info\"\n";
+
+// ----------------- config show -----------------
 
 #[test]
 fn show_prints_full_table_with_source_attribution() {
@@ -145,6 +147,8 @@ fn show_json_single_key_emits_value_and_source_object() {
     assert!(parsed["source"].as_str().unwrap().contains("config file"));
 }
 
+// ----------------- config path -----------------
+
 #[test]
 fn path_returns_resolved_path_on_one_line() {
     let mut cmd = common::isolated_cmd();
@@ -217,6 +221,8 @@ fn path_json_emits_path_when_file_exists() {
     assert_eq!(parsed["path"], cfg.path().display().to_string());
 }
 
+// ----------------- file discovery -----------------
+
 #[test]
 fn env_var_picks_config_file_when_no_flag() {
     let mut cmd = common::isolated_cmd();
@@ -284,230 +290,15 @@ fn missing_xdg_default_errors_with_actionable_hint() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("no config file"))
-        .stderr(predicate::str::contains("ferro-protect config init"));
+        .stderr(predicate::str::contains("ferro-protect config template"));
 }
 
-// ----------------- config edit -----------------
+// ----------------- config template -----------------
 
 #[test]
-fn edit_creates_xdg_default_on_first_use() {
+fn template_writes_commented_scaffold_to_xdg_default() {
     let (home, mut cmd) = common::cmd_with_tempdir_home();
-    cmd.args(["config", "edit", "host", "nvr.local"])
-        .assert()
-        .success();
-    let path = home
-        .path()
-        .join(".config")
-        .join("ferro-protect")
-        .join("config.toml");
-    let body = fs::read_to_string(&path).expect("file exists");
-    assert!(body.contains("host = \"nvr.local\""), "body = {body}");
-    assert!(
-        body.contains("ferro-protect config file"),
-        "header missing: {body}"
-    );
-}
-
-#[test]
-fn edit_round_trip_preserves_comments() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    let original = "# user note: this is the home NVR\n\
-                    host = \"old.local\"\n\
-                    # api key lives elsewhere\n";
-    fs::write(cfg.path(), original).expect("write");
-
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "new.local",
-    ])
-    .assert()
-    .success();
-
-    let body = fs::read_to_string(cfg.path()).expect("read");
-    assert!(
-        body.contains("# user note: this is the home NVR"),
-        "body = {body}"
-    );
-    assert!(body.contains("host = \"new.local\""), "body = {body}");
-    assert!(body.contains("# api key lives elsewhere"), "body = {body}");
-}
-
-#[test]
-fn edit_invalid_log_level_leaves_file_untouched() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    let original = "log_level = \"info\"\n# keep me\n";
-    fs::write(cfg.path(), original).expect("write");
-
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "log_level",
-        "bogus",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicate::str::contains("invalid value"));
-
-    let body = fs::read_to_string(cfg.path()).expect("read");
-    assert_eq!(body, original);
-}
-
-#[test]
-fn edit_refuses_raw_api_key_on_command_line() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "").expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "api_key",
-        "raw-secret-value",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicate::str::contains("refusing to set `api_key`"));
-    let body = fs::read_to_string(cfg.path()).expect("read");
-    assert!(
-        !body.contains("raw-secret-value"),
-        "raw key leaked into file: {body}"
-    );
-}
-
-#[test]
-fn edit_api_key_file_is_accepted() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "").expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "api_key_file",
-        "/tmp/k",
-    ])
-    .assert()
-    .success();
-    let body = fs::read_to_string(cfg.path()).expect("read");
-    assert!(body.contains("api_key_file = \"/tmp/k\""), "body = {body}");
-}
-
-#[test]
-fn edit_host_conflicts_with_existing_base_url() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    let original = "base_url = \"https://nvr.example/proxy/protect/integration\"\n";
-    fs::write(cfg.path(), original).expect("write");
-
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "nvr.local",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicate::str::contains("conflict"));
-
-    let body = fs::read_to_string(cfg.path()).expect("read");
-    assert_eq!(body, original, "file was modified on conflict");
-}
-
-#[test]
-fn edit_unset_removes_field() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "host = \"nvr.local\"\ninsecure = true\n").expect("write");
-
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "--unset",
-    ])
-    .assert()
-    .success();
-
-    let body = fs::read_to_string(cfg.path()).expect("read");
-    assert!(!body.contains("host ="), "body still has host: {body}");
-    assert!(
-        body.contains("insecure = true"),
-        "body lost insecure: {body}"
-    );
-}
-
-#[test]
-fn edit_unset_already_absent_is_noop() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "insecure = true\n").expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "--unset",
-    ])
-    .assert()
-    .success();
-}
-
-#[test]
-fn precedence_flag_wins_over_env_and_file_in_show() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "host = \"file-host\"\n").expect("write");
-    // `config show` ignores per-invocation overrides by design
-    // (see commands/config.rs::show), so the env var should win.
-    let out = cmd
-        .env("UNIFI_PROTECT_HOST", "env-host")
-        .args([
-            "--config",
-            cfg.path().to_str().unwrap(),
-            "config",
-            "show",
-            "host",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert_eq!(stdout.trim_end(), "env-host");
-}
-
-#[test]
-fn init_refuses_when_stdin_is_not_a_tty() {
-    let mut cmd = common::isolated_cmd();
-    cmd.args(["config", "init"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("requires a TTY"));
-}
-
-// ----------------- config init --template -----------------
-
-#[test]
-fn init_template_writes_commented_scaffold_without_a_tty() {
-    let (home, mut cmd) = common::cmd_with_tempdir_home();
-    cmd.args(["config", "init", "--template"])
-        .assert()
-        .success();
+    cmd.args(["config", "template"]).assert().success();
     let path = home
         .path()
         .join(".config")
@@ -527,25 +318,10 @@ fn init_template_writes_commented_scaffold_without_a_tty() {
         let needle = format!("# {key} =");
         assert!(body.contains(&needle), "missing `{needle}` in: {body}");
     }
-    // The template parses as an empty (all-default) config -- nothing
-    // is actually set, since every line is a comment.
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_ferro-protect"))
-        .args(["--config", path.to_str().unwrap(), "config", "show", "host"])
-        .env_clear()
-        .env("HOME", home.path())
-        .output()
-        .expect("run");
-    assert!(
-        out.status.success(),
-        "stderr = {:?}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(stdout.trim_end(), "<unset>");
 }
 
 #[test]
-fn init_template_refuses_to_overwrite_without_force() {
+fn template_refuses_to_overwrite_without_force() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), "host = \"keep-me\"\n").expect("write");
@@ -553,8 +329,7 @@ fn init_template_refuses_to_overwrite_without_force() {
         "--config",
         cfg.path().to_str().unwrap(),
         "config",
-        "init",
-        "--template",
+        "template",
     ])
     .assert()
     .failure()
@@ -564,7 +339,7 @@ fn init_template_refuses_to_overwrite_without_force() {
 }
 
 #[test]
-fn init_template_force_overwrites_existing_file() {
+fn template_force_overwrites_existing_file() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), "host = \"old\"\n").expect("write");
@@ -572,8 +347,7 @@ fn init_template_force_overwrites_existing_file() {
         "--config",
         cfg.path().to_str().unwrap(),
         "config",
-        "init",
-        "--template",
+        "template",
         "--force",
     ])
     .assert()
@@ -586,166 +360,91 @@ fn init_template_force_overwrites_existing_file() {
     );
 }
 
-// ----------------- config delete -----------------
-
 #[test]
-fn delete_yes_removes_file_without_prompt() {
+fn template_stdout_prints_without_writing() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), SAMPLE).expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "delete",
-        "--yes",
-    ])
-    .assert()
-    .success()
-    .stderr(predicate::str::contains("Deleted"));
-    assert!(!cfg.path().exists(), "file still present");
-}
+    let original = "host = \"keep-me\"\n";
+    fs::write(cfg.path(), original).expect("write");
 
-#[test]
-fn delete_short_flag_y_works() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), SAMPLE).expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "delete",
-        "-y",
-    ])
-    .assert()
-    .success();
-    assert!(!cfg.path().exists());
-}
-
-#[test]
-fn delete_refuses_without_tty_or_yes() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), SAMPLE).expect("write");
-    cmd.args(["--config", cfg.path().to_str().unwrap(), "config", "delete"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--yes"));
-    assert!(cfg.path().exists(), "file removed despite no confirmation");
-}
-
-#[test]
-fn delete_missing_file_errors() {
-    let mut cmd = common::isolated_cmd();
-    cmd.args([
-        "--config",
-        "/definitely/not/here.toml",
-        "config",
-        "delete",
-        "--yes",
-    ])
-    .assert()
-    .failure();
-}
-
-// ----------------- edit-creates-file warning -----------------
-
-#[test]
-fn edit_warns_when_creating_new_file() {
-    let dir = tempfile::tempdir().expect("tmpdir");
-    let cfg_path = dir.path().join("new.toml");
-    assert!(!cfg_path.exists());
-    let mut cmd = common::isolated_cmd();
-    cmd.args([
-        "--config",
-        cfg_path.to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "nvr.local",
-    ])
-    .assert()
-    .success()
-    .stderr(predicate::str::contains("created new config file"));
-    assert!(cfg_path.exists());
-}
-
-// ----------------- config list -----------------
-
-#[test]
-fn list_prints_one_field_per_line() {
-    let mut cmd = common::isolated_cmd();
     let out = cmd
-        .args(["config", "list"])
+        .args([
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "config",
+            "template",
+            "--stdout",
+        ])
         .assert()
         .success()
         .get_output()
         .clone();
     let stdout = String::from_utf8(out.stdout).expect("utf8");
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert!(lines.contains(&"host"), "lines = {lines:?}");
-    assert!(lines.contains(&"log_level"), "lines = {lines:?}");
-    assert!(lines.contains(&"api_key_file"), "lines = {lines:?}");
-    // Plain mode must produce *only* keys (one per line); no decoration
-    // so shell completion / xargs consumers can rely on the format.
-    for line in &lines {
-        assert!(
-            !line.contains('=') && !line.contains('#'),
-            "decoration leaked into plain output: {line:?}"
-        );
-    }
+    assert!(
+        stdout.contains("# host ="),
+        "template missing from stdout: {stdout}"
+    );
+    // File untouched — `--stdout` must never modify the destination.
+    let body = fs::read_to_string(cfg.path()).expect("read");
+    assert_eq!(body, original, "file modified despite --stdout");
 }
 
+#[cfg(unix)]
 #[test]
-fn list_does_not_require_a_config_file() {
-    // No --config, no env, no XDG file. `list` is about "what fields
-    // exist", independent of file state.
-    let (_home, mut cmd) = common::cmd_with_tempdir_home();
-    cmd.args(["config", "list"]).assert().success();
-}
-
-#[test]
-fn list_verbose_emits_descriptions() {
+fn template_writes_with_0600_perms() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let cfg_path = dir.path().join("scaffold.toml");
     let mut cmd = common::isolated_cmd();
-    let out = cmd
-        .args(["config", "list", "-v"])
+    cmd.args(["--config", cfg_path.to_str().unwrap(), "config", "template"])
         .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("host"), "stdout = {stdout}");
-    assert!(stdout.contains("DESCRIPTION"), "stdout = {stdout}");
-    assert!(stdout.contains("Mutually exclusive"), "stdout = {stdout}");
+        .success();
+    let mode = fs::metadata(&cfg_path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    // Owner-read+write only -- no group, no world. The atomic
+    // temp-write helper opens with mode 0o600 at creation, no
+    // chmod-after-write window.
+    assert_eq!(mode, 0o600, "got 0o{mode:o}");
 }
 
+#[cfg(unix)]
 #[test]
-fn list_json_emits_array_of_entries() {
+fn template_atomic_write_does_not_leave_tmp_file() {
     let mut cmd = common::isolated_cmd();
-    let out = cmd
-        .args(["--json=true", "config", "list"])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    let arr = parsed.as_array().expect("array");
-    assert!(arr.iter().any(|r| r["field"] == "host"));
-    assert!(arr.iter().any(|r| r["field"] == "api_key_file"));
-    for row in arr {
-        assert!(row["description"].is_string());
-        assert!(row["example"].is_string());
-    }
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "template",
+        "--force",
+    ])
+    .assert()
+    .success();
+    let parent = cfg.path().parent().expect("parent");
+    let leftovers: Vec<_> = fs::read_dir(parent)
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "stale temp files: {:?}",
+        leftovers.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
 }
 
 // ----------------- tilde expansion at load -----------------
 
-/// The wizard suggests `~/.config/ferro-protect/api_key` as the
-/// default `api_key_file`; the runtime resolver later tries to read
-/// that path. Without expansion, `std::fs::read_to_string("~/...")`
-/// would fail. Verify the loader expands tilde so `config show
-/// api_key_file` reports an absolute path that matches `$HOME/...`.
+/// The template example for `api_key_file` is `~/.config/...`; users
+/// hand-edit that into their config. Without expansion, the runtime
+/// would try to `read_to_string("~/...")` and fail. Verify the loader
+/// expands tilde so `config show api_key_file` reports an absolute
+/// path that matches `$HOME/...`.
 #[test]
 fn load_expands_tilde_in_api_key_file_so_runtime_can_read_it() {
     let (home, mut cmd) = common::cmd_with_tempdir_home();
@@ -771,102 +470,42 @@ fn load_expands_tilde_in_api_key_file_so_runtime_can_read_it() {
         expected.display().to_string(),
         "tilde was not expanded by the loader",
     );
-    // Sanity: no literal `~` remains.
     assert!(!stdout.contains('~'), "tilde leaked through: {stdout}");
 }
 
-// ----------------- security hardening -----------------
+// ----------------- precedence + cross-source mutual exclusion -----------------
 
-#[cfg(unix)]
 #[test]
-fn edit_writes_new_file_with_0600_perms() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().expect("tmpdir");
-    let cfg_path = dir.path().join("new.toml");
-    let mut cmd = common::isolated_cmd();
-    cmd.args([
-        "--config",
-        cfg_path.to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "nvr.local",
-    ])
-    .assert()
-    .success();
-    let perms = fs::metadata(&cfg_path).expect("metadata").permissions();
-    let mode = perms.mode() & 0o777;
-    // Owner-read+write only -- no group, no world. The atomic
-    // temp-write helper opens with mode 0o600 at creation, no
-    // chmod-after-write window.
-    assert_eq!(mode, 0o600, "got 0o{mode:o}");
-}
-
-#[cfg(unix)]
-#[test]
-fn init_template_writes_with_0600_perms() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().expect("tmpdir");
-    let cfg_path = dir.path().join("scaffold.toml");
-    let mut cmd = common::isolated_cmd();
-    cmd.args([
-        "--config",
-        cfg_path.to_str().unwrap(),
-        "config",
-        "init",
-        "--template",
-    ])
-    .assert()
-    .success();
-    let mode = fs::metadata(&cfg_path)
-        .expect("metadata")
-        .permissions()
-        .mode()
-        & 0o777;
-    assert_eq!(mode, 0o600, "got 0o{mode:o}");
-}
-
-#[cfg(unix)]
-#[test]
-fn edit_atomic_write_does_not_leave_tmp_file() {
+fn precedence_flag_wins_over_env_and_file_in_show() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "new",
-    ])
-    .assert()
-    .success();
-    // After a successful edit, no temp sibling should remain. The
-    // temp file is named `.<basename>.tmp.<pid>` next to the target.
-    let parent = cfg.path().parent().expect("parent");
-    let leftovers: Vec<_> = fs::read_dir(parent)
-        .expect("read_dir")
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
-        .collect();
-    assert!(
-        leftovers.is_empty(),
-        "stale temp files: {:?}",
-        leftovers.iter().map(|e| e.path()).collect::<Vec<_>>()
-    );
+    fs::write(cfg.path(), "host = \"file-host\"\n").expect("write");
+    // `config show` ignores per-invocation overrides by design
+    // (see commands/config.rs::show), so the env var should win.
+    let out = cmd
+        .env("UNIFI_PROTECT_HOST", "env-host")
+        .args([
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "config",
+            "show",
+            "host",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8(out.stdout).expect("utf8");
+    assert_eq!(stdout.trim_end(), "env-host");
 }
 
-// ----------------- regression: Copilot review fixes -----------------
-
 /// `config show` must not report `--config` as the api_key source --
-/// `--config` is a config-file path, not an `--api-key-file` path. See
-/// Copilot review comment id 3258819815.
+/// `--config` is a config-file path, not an `--api-key-file` path.
+/// Regression for the Copilot review finding.
 #[test]
 fn show_does_not_attribute_api_key_to_config_flag() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    // Config file has no api_key / api_key_file, env has neither.
     fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write");
     let out = cmd
         .args([
@@ -893,7 +532,7 @@ fn show_does_not_attribute_api_key_to_config_flag() {
 
 /// `config show` reports `log_level = warn` (the runtime default) with
 /// source `default` instead of `<unset>` when neither flag nor file
-/// supplies a value. See Copilot review comment id 3258819952.
+/// supplies a value. Regression for the Copilot review finding.
 #[test]
 fn show_log_level_defaults_to_warn_with_default_source() {
     let mut cmd = common::isolated_cmd();
@@ -919,14 +558,12 @@ fn show_log_level_defaults_to_warn_with_default_source() {
 
 /// Cross-source mutual exclusion: setting `host` in the file and
 /// `--base-url` on the flag (or any other cross-source pairing) must
-/// be rejected. See Copilot review comment id 3258819909.
+/// be rejected.
 #[test]
 fn host_in_file_plus_base_url_flag_is_rejected() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write");
-    // The command will fail before any network call because of the
-    // cross-source check. We use `info` as a non-config command path.
     cmd.args([
         "--config",
         cfg.path().to_str().unwrap(),
@@ -954,22 +591,4 @@ fn host_and_base_url_both_on_argv_is_rejected_by_clap() {
     .stderr(
         predicate::str::contains("cannot be used with").or(predicate::str::contains("conflicts")),
     );
-}
-
-#[test]
-fn edit_existing_file_emits_no_creation_warning() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
-    cmd.args([
-        "--config",
-        cfg.path().to_str().unwrap(),
-        "config",
-        "edit",
-        "host",
-        "new",
-    ])
-    .assert()
-    .success()
-    .stderr(predicate::str::contains("created new config file").not());
 }

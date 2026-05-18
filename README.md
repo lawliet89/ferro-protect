@@ -142,36 +142,27 @@ rejected.
 ### Managing the config file
 
 ```sh
-ferro-protect config init                  # interactive wizard (TTY required)
-ferro-protect config init --template       # write a commented-out scaffold; no TTY needed
-ferro-protect config show                  # print effective config + source per field
-ferro-protect config show host             # bare value, scriptable
-ferro-protect config show --json           # JSON form, with per-field {value, source}
-ferro-protect config path                  # print the resolved config file path
-ferro-protect config edit host nvr.local   # set a single field; preserves comments
-ferro-protect config edit host --unset     # remove a field
-ferro-protect config delete                # remove the file (prompts for confirmation)
-ferro-protect config delete --yes          # skip the prompt
-ferro-protect config list                  # list recognised field names (one per line)
-ferro-protect config list -v               # field + description table
+ferro-protect config template            # write a commented-out scaffold to the config path
+ferro-protect config template --force    # overwrite an existing file
+ferro-protect config template --stdout   # print the scaffold; no file is written
+ferro-protect config show                # print effective config + source per field
+ferro-protect config show host           # bare value, scriptable
+ferro-protect config show --json         # JSON form, with per-field {value, source}
+ferro-protect config path                # print the resolved config file path
 ```
 
-`config list` is useful for shell completion — e.g.
+Users hand-edit the TOML file with their preferred editor — there is
+no in-CLI editor, wizard, or delete. The deliberate trade-off was to
+keep the secret-handling surface (hidden-input pasting, key-file
+writing, per-field parsing, backup logic) out of the binary. To
+remove the file, `rm` it; to edit, open it in `$EDITOR`.
 
-```sh
-# bash
-complete -W "$(ferro-protect config list)" ferro-protect-config-keys
-```
-
-`config show`, `config path`, and `config delete` error when the
-resolved config file doesn't exist — they're file-inspection /
-file-management commands, so silently rendering defaults or no-opping
-would be misleading. Run `config init` (full wizard), `config init
---template` (commented-out scaffold; safe in non-TTY contexts), or
-`config edit KEY VALUE` (creates the file on first use, with a stderr
-warning) to bootstrap one. Other subcommands (`info`, `cameras list`,
-…) still treat a missing XDG default as "no config" and fall back to
-env vars + flags as usual.
+`config show` and `config path` error when the resolved config file
+doesn't exist — they're file-inspection commands, so silently
+rendering defaults would be misleading. Run `config template` to
+bootstrap. Other subcommands (`info`, `cameras list`, …) still treat
+a missing XDG default as "no config" and fall back to env vars +
+flags as usual.
 
 `config edit` refuses to set `api_key` from the command line — the raw
 key would land in shell history, `ps`, and the parent process's argv.
