@@ -38,14 +38,11 @@ typify = "0.4"
 schemars = "0.8"
 syn = { version = "2", features = ["full"] }
 prettyplease = "0.2"
-is-terminal = "0.4"
 insta = { version = "1", features = ["json"] }
 tempfile = "3"
 governor = { version = "0.10", default-features = false, features = ["std"] }
-toml_edit = { version = "0.22", features = ["serde"] }
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 etcetera = "0.11"
-rpassword = "7"
-dialoguer = { version = "0.12", default-features = false }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
