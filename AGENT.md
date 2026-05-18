@@ -97,6 +97,37 @@ so reviewers and historians can tell agent output from human output.
   already get a `Co-Authored-By: Claude` trailer / "Generated with
   Claude Code" footer).
 
+## Resolving review threads — reply + resolve is one operation
+
+After replying to an inline PR review comment, **also resolve the
+underlying review thread** in the same workflow. Leaving a reply
+without resolving the thread keeps the conversation visually
+unresolved in the UI even when the code is fixed, which is noisy
+for the reviewer.
+
+- Find the thread ID for a comment you replied to:
+
+  ```sh
+  gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") {
+    pullRequest(number:<N>) { reviewThreads(first:100) {
+      nodes { id isResolved comments(first:1) { nodes { databaseId } } } } } } }'
+  ```
+
+  Match `databaseId` against the comment ID you replied to; the
+  enclosing node's `id` is the thread ID.
+
+- Resolve it:
+
+  ```sh
+  gh api graphql -f query='mutation { resolveReviewThread(input: {
+    threadId: "<thread_id>" }) { thread { id isResolved } } }'
+  ```
+
+- **Exception**: if your reply is "not fixed because <reason>" (i.e.
+  declining the suggestion), leave the thread open so the reviewer
+  can push back. Resolve only when the underlying issue is actually
+  addressed.
+
 ## PGP signing — non-negotiable
 
 The user has commit signing configured and may require a passphrase.
