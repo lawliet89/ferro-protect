@@ -42,6 +42,11 @@ pub enum Action {
     /// when the binary runs a real command like `info` or
     /// `cameras list`.
     ///
+    /// Note: `log_level` reflects only the `log_level` config field.
+    /// Runtime logging is *additionally* filtered by `UNIFI_PROTECT_LOG`
+    /// and `RUST_LOG` (env_logger filter syntax, not enum values), which
+    /// are independent of this field and not surfaced here.
+    ///
     /// Pass a single KEY to print only that field's value (scriptable).
     /// `--json` switches to a structured `{value, source}` form.
     Show {
