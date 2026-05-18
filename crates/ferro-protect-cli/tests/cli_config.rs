@@ -167,8 +167,16 @@ fn path_returns_resolved_path_on_one_line() {
 }
 
 #[test]
-fn path_falls_back_to_xdg_default_when_no_flag_or_env() {
+fn path_resolves_xdg_default_when_file_exists() {
     let (home, mut cmd) = common::cmd_with_tempdir_home();
+    let expected: PathBuf = home
+        .path()
+        .join(".config")
+        .join("ferro-protect")
+        .join("config.toml");
+    fs::create_dir_all(expected.parent().unwrap()).expect("mkdir");
+    fs::write(&expected, SAMPLE).expect("write");
+
     let out = cmd
         .args(["config", "path"])
         .assert()
@@ -176,26 +184,37 @@ fn path_falls_back_to_xdg_default_when_no_flag_or_env() {
         .get_output()
         .clone();
     let stdout = String::from_utf8(out.stdout).expect("utf8");
-    let expected: PathBuf = home
-        .path()
-        .join(".config")
-        .join("ferro-protect")
-        .join("config.toml");
     assert_eq!(stdout.trim_end(), expected.display().to_string());
 }
 
 #[test]
-fn path_json_emits_path_and_exists_bool() {
+fn path_errors_when_xdg_default_is_missing() {
+    let (_home, mut cmd) = common::cmd_with_tempdir_home();
+    cmd.args(["config", "path"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no config file"));
+}
+
+#[test]
+fn path_json_emits_path_when_file_exists() {
     let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), SAMPLE).expect("write");
     let out = cmd
-        .args(["--json=true", "config", "path"])
+        .args([
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--json=true",
+            "config",
+            "path",
+        ])
         .assert()
         .success()
         .get_output()
         .clone();
     let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert!(parsed["path"].is_string());
-    assert_eq!(parsed["exists"], false);
+    assert_eq!(parsed["path"], cfg.path().display().to_string());
 }
 
 #[test]
@@ -258,13 +277,14 @@ fn missing_env_config_file_is_hard_error() {
 }
 
 #[test]
-fn missing_xdg_default_is_fine_show_just_renders_defaults() {
-    let mut cmd = common::isolated_cmd();
+fn missing_xdg_default_errors_with_actionable_hint() {
+    let (_home, mut cmd) = common::cmd_with_tempdir_home();
     // No --config, no env, no file at HOME/.config/ferro-protect/config.toml.
     cmd.args(["config", "show"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("default"));
+        .failure()
+        .stderr(predicate::str::contains("no config file"))
+        .stderr(predicate::str::contains("ferro-protect config init"));
 }
 
 // ----------------- config edit -----------------

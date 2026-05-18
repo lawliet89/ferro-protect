@@ -117,6 +117,15 @@ pub enum ConfigCmdError {
         "interactive `config init` requires a TTY on stdin. Edit the file directly, or use `config edit KEY VALUE` for individual fields."
     )]
     NotATty,
+    #[error(
+        "no config file at {}\n\
+         Run `ferro-protect config init` to create one, point `--config` /\n\
+         `UNIFI_PROTECT_CONFIG_FILE` at an existing file, or use\n\
+         `ferro-protect config edit KEY VALUE` which will create the file\n\
+         on first use.",
+        path.display()
+    )]
+    NoConfigFile { path: PathBuf },
     #[error("wizard cancelled")]
     Cancelled,
     #[error(transparent)]
@@ -160,15 +169,30 @@ fn show<E>(
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
-    let loaded = config::load(config_flag, env)?;
+    // Validate the user-supplied key (input error) before touching the
+    // file (state error) -- input errors shouldn't depend on file state.
+    if let Some(k) = key
+        && !KNOWN_KEYS.contains(&k)
+    {
+        return Err(unknown_key(k));
+    }
+    // `show` is a config-file inspection tool, so a missing file is an
+    // error rather than a silent fallback to defaults. The explicit
+    // `--config` / `UNIFI_PROTECT_CONFIG_FILE` cases already error
+    // inside `config::load`; if `load` returns `None`, we're on the
+    // XDG-default path and the file is absent there too.
+    let Some(loaded) = config::load(config_flag, env)? else {
+        let (path, _src) = config::resolve_path(config_flag, env)?;
+        return Err(ConfigCmdError::NoConfigFile { path });
+    };
     // `Flags::default()` — `show` only reflects what the loader sees
     // *outside* of any per-invocation flags besides --config. Per-flag
     // overrides are an inherently per-invocation thing; reflecting them
     // would mean `config show --insecure` claims insecure=Flag, which
     // is true for that invocation only and misleading as "the
     // effective config".
-    let resolved = config::resolve(&Flags::default(), loaded.as_ref(), env);
-    let api_key = resolve_api_key_source_only(config_flag, loaded.as_ref(), env);
+    let resolved = config::resolve(&Flags::default(), Some(&loaded), env);
+    let api_key = resolve_api_key_source_only(config_flag, Some(&loaded), env);
 
     key.map_or_else(
         || show_all(&resolved, api_key, json),
@@ -367,7 +391,6 @@ fn source_label(source: Option<&FieldSource>, file_path: Option<&Path>) -> Strin
 #[derive(Debug, Serialize)]
 struct PathJson {
     path: String,
-    exists: bool,
 }
 
 fn path<E>(config_flag: Option<&Path>, env: &E, json: bool) -> Result<(), ConfigCmdError>
@@ -375,11 +398,12 @@ where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     let (path, _source) = config::resolve_path(config_flag, env)?;
-    let exists = path.exists();
+    if !path.exists() {
+        return Err(ConfigCmdError::NoConfigFile { path });
+    }
     if json {
         let pj = PathJson {
             path: path.display().to_string(),
-            exists,
         };
         let stdout = io::stdout();
         let mut lock = stdout.lock();
