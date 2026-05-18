@@ -210,10 +210,7 @@ pub enum ConfigError {
         "env `{name}` has invalid value `{value}`: \
          expected one of 1/0, true/false, yes/no, on/off (case-insensitive)"
     )]
-    BadEnvBool {
-        name: &'static str,
-        value: String,
-    },
+    BadEnvBool { name: &'static str, value: String },
 }
 
 /// Which input picked the config-file path.
