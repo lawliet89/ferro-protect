@@ -137,6 +137,40 @@ async fn cameras_snapshot_writes_to_out_path() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_snapshot_writes_bytes_to_non_tty_stdout() {
+    // Default path (no --out) when stdout is captured (not a TTY):
+    // the CLI must write the raw JPEG bytes to stdout. assert_cmd
+    // pipes stdout, so `is_terminal()` returns false here, which is
+    // exactly the user-redirected `... > snap.jpg` scenario.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/cameras/abc/snapshot"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(FIXTURE_JPEG)
+                .insert_header("content-type", "image/jpeg"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    let assert =
+        tokio::task::spawn_blocking(move || run_cmd(&base_url, &["cameras", "snapshot", "abc"]))
+            .await
+            .expect("spawn_blocking");
+
+    let output = assert.success();
+    let stdout = &output.get_output().stdout;
+    assert_eq!(
+        stdout,
+        FIXTURE_JPEG,
+        "expected raw JPEG bytes on stdout, got {} bytes",
+        stdout.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cameras_snapshot_rejects_json_flag() {
     // `cameras snapshot` returns binary; the global `--json` flag is
     // string output. The CLI must reject the combination up front
@@ -265,6 +299,57 @@ async fn cameras_rtsps_multiple_qualities_preserve_request_order() {
     assert!(
         low_idx < high_idx,
         "expected low row before high (request order); stdout:\n{stdout}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_talkback_json_uses_camel_case_field_names() {
+    // The human renderer would happily silently absorb a rename of
+    // the hand-written `TalkbackSession` fields. Parsing the
+    // `--json` payload as `serde_json::Value` pins the wire-side
+    // contract: keys `bitsPerSample`, `codec`, `samplingRate`,
+    // `url` — and the right value for each.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/talkback-session"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"bitsPerSample":16,"codec":"aac","samplingRate":16000,"url":"wss://nvr/talkback/abc"}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    let assert = tokio::task::spawn_blocking(move || {
+        run_cmd(&base_url, &["--json", "cameras", "talkback", "abc"])
+    })
+    .await
+    .expect("spawn_blocking");
+
+    let output = assert.success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).expect("stdout is utf-8");
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}; raw:\n{stdout}"));
+    assert_eq!(json["bitsPerSample"], 16);
+    assert_eq!(json["codec"], "aac");
+    assert_eq!(json["samplingRate"], 16000);
+    assert_eq!(json["url"], "wss://nvr/talkback/abc");
+    // Catch accidental snake_case fallthrough — if the
+    // `#[serde(rename_all = "camelCase")]` were dropped, both
+    // names would appear in successive runs depending on field
+    // order, but the explicit absence assertion makes the test
+    // fail-stop on the regression.
+    assert!(
+        json.get("bits_per_sample").is_none(),
+        "unexpected snake_case key bits_per_sample in JSON output: {stdout}"
+    );
+    assert!(
+        json.get("sampling_rate").is_none(),
+        "unexpected snake_case key sampling_rate in JSON output: {stdout}"
     );
 }
 

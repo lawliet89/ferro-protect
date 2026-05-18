@@ -124,10 +124,12 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
-    // The helpers below are unused at phase 4 but cover the shapes
-    // phases 5-8 will need (PATCH/POST bodies, 204 No Content, binary
-    // payloads). Keeping them here means each future endpoint is a
-    // one-line wrapper rather than a one-helper-plus-one-line churn.
+    // POST/PATCH/DELETE/binary helpers. `post_json`, `post_empty_json`,
+    // and `get_bytes` are wired up by phase 5's camera endpoints;
+    // `patch_json` and `send_no_content` are still inert (carrying
+    // `#[expect(dead_code, ...)]`) until phases 6-8 wire up writes,
+    // viewer assignment, and DELETE-shaped endpoints. Keeping the
+    // shapes here means each future endpoint stays a one-line wrapper.
 
     pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
