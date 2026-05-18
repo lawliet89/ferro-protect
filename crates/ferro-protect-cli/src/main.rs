@@ -164,7 +164,8 @@ enum Command {
         action: commands::viewers::Action,
     },
     /// Manage the persistent TOML config file. See the subcommand's
-    /// own `--help` for the five actions (init/show/edit/path/delete).
+    /// own `--help` for the six actions
+    /// (init/show/edit/path/delete/list).
     Config {
         #[command(subcommand)]
         action: commands::config::Action,
