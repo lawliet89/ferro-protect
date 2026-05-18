@@ -115,6 +115,7 @@ impl Middleware for RateLimitMiddleware {
 
 // Behaviour is exercised end-to-end against a wiremock server in
 // `tests/rate_limit.rs::proactive_throttle_caps_burst_to_configured_capacity`.
-// Governor uses its own monotonic clock (quanta), which tokio's
-// `start_paused = true` cannot stub, so reliable timing assertions live in
-// the integration suite.
+// Governor reads time via `std::time::Instant` (its `DefaultClock` falls back
+// to `MonotonicClock` with the `quanta` feature off, which is how this crate
+// configures it). Tokio's `start_paused = true` only virtualises `tokio::time`,
+// not std, so reliable timing assertions live in the integration suite.
