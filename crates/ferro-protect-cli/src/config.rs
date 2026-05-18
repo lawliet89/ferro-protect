@@ -25,11 +25,137 @@ use thiserror::Error;
 
 use crate::logging::LogLevel;
 
+/// Env var that picks the config *file* (not a field within it). Kept
+/// separate from [`FIELDS`] because it's about file discovery, not a
+/// merged value.
 pub const ENV_CONFIG_FILE: &str = "UNIFI_PROTECT_CONFIG_FILE";
-pub const ENV_HOST: &str = "UNIFI_PROTECT_HOST";
-pub const ENV_BASE_URL: &str = "UNIFI_PROTECT_BASE_URL";
-pub const ENV_INSECURE: &str = "UNIFI_PROTECT_INSECURE";
-pub const ENV_JSON: &str = "UNIFI_PROTECT_JSON";
+
+/// What kind of TOML value a [`FieldMeta`] expects. Drives `config edit`
+/// parsing and the `--template` scaffold's example RHS.
+///
+/// Marked non-exhaustive so adding a new variant (e.g. `Integer`) is
+/// not a breaking change for callers in this crate that match on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldType {
+    /// Free-form string (TOML `"..."`).
+    String,
+    /// File-system path (string in TOML, but conventionally tilde-expanded).
+    Path,
+    /// `true` / `false` (also accepts `1/0/yes/no/on/off` via the boolish parser).
+    Bool,
+    /// One of [`LogLevel`]'s variants (lowercase wire form).
+    LogLevel,
+}
+
+/// Per-field metadata. Single source of truth for every recognised
+/// config field — drives:
+///
+/// * the `config show` / `config edit` / `config list` key validators
+/// * the `config init --template` scaffold
+/// * `config edit`'s per-type value parsing
+/// * `config::resolve`'s env-var lookup
+/// * the "valid fields: …" help text in error messages
+///
+/// `api_key` is addressable in `show` (rendered as `<set>`/`<unset>`)
+/// but **refused** in `edit` so a raw key never lands on argv.
+#[derive(Debug, Clone, Copy)]
+pub struct FieldMeta {
+    /// Field name as it appears in TOML and on the CLI.
+    pub key: &'static str,
+    /// Human-readable purpose. One-liner; rendered as `# {description}`
+    /// in the `--template` scaffold.
+    pub description: &'static str,
+    /// Example RHS for the `--template` scaffold. Include quotes if the
+    /// value is a string.
+    pub example: &'static str,
+    /// How `config edit` parses a raw CLI value into a TOML value.
+    pub ty: FieldType,
+    /// Env var that `config::resolve` consults for this field, or `None`.
+    /// `None` for `api_key`/`api_key_file` (env handling lives in
+    /// [`crate::api_key`]) and `log_level` (the env_logger filter syntax
+    /// of `UNIFI_PROTECT_LOG`/`RUST_LOG` can't reduce to a single
+    /// `LogLevel`, so we keep that resolution inside `logging::init`).
+    pub env_var: Option<&'static str>,
+}
+
+/// The canonical field table. Adding a new field starts here.
+pub const FIELDS: &[FieldMeta] = &[
+    FieldMeta {
+        key: "host",
+        description: "NVR hostname or host:port. Mutually exclusive with `base_url`.",
+        example: "\"nvr.local\"",
+        ty: FieldType::String,
+        env_var: Some("UNIFI_PROTECT_HOST"),
+    },
+    FieldMeta {
+        key: "base_url",
+        description: "Override the entire base URL. Mutually exclusive with `host`.",
+        example: "\"https://nvr.local/proxy/protect/integration\"",
+        ty: FieldType::String,
+        env_var: Some("UNIFI_PROTECT_BASE_URL"),
+    },
+    FieldMeta {
+        key: "api_key_file",
+        description: "Path to a file containing the API key (preferred over inline).",
+        example: "\"~/.config/ferro-protect/api_key\"",
+        ty: FieldType::Path,
+        env_var: None,
+    },
+    FieldMeta {
+        key: "api_key",
+        description: "Raw API key inline (discouraged -- prefer `api_key_file`).",
+        example: "\"...\"",
+        ty: FieldType::String,
+        env_var: None,
+    },
+    FieldMeta {
+        key: "insecure",
+        description: "Skip TLS certificate validation (typical for self-signed NVRs).",
+        example: "false",
+        ty: FieldType::Bool,
+        env_var: Some("UNIFI_PROTECT_INSECURE"),
+    },
+    FieldMeta {
+        key: "json",
+        description: "Default to JSON output instead of human-readable text.",
+        example: "false",
+        ty: FieldType::Bool,
+        env_var: Some("UNIFI_PROTECT_JSON"),
+    },
+    FieldMeta {
+        key: "log_level",
+        description: "Log level: error | warn | info | debug | trace.",
+        example: "\"warn\"",
+        ty: FieldType::LogLevel,
+        env_var: None,
+    },
+];
+
+/// Find a field by key. `None` for unknown keys.
+#[must_use]
+pub fn field(key: &str) -> Option<&'static FieldMeta> {
+    FIELDS.iter().find(|f| f.key == key)
+}
+
+/// `true` when `key` matches an entry in [`FIELDS`].
+#[must_use]
+pub fn is_known_key(key: &str) -> bool {
+    field(key).is_some()
+}
+
+/// `"host, base_url, ..."` — used in error messages and `config list`.
+#[must_use]
+pub fn known_keys_joined() -> String {
+    FIELDS.iter().map(|f| f.key).collect::<Vec<_>>().join(", ")
+}
+
+/// Convenience: env-var name for a known field, panicking on miss. Used
+/// by [`resolve`] where the key is hard-coded and known to be valid.
+fn env_var_for(key: &str) -> &'static str {
+    field(key)
+        .and_then(|f| f.env_var)
+        .unwrap_or_else(|| panic!("BUG: no env var for field `{key}`"))
+}
 
 /// On-disk config schema. Every field is optional; `None` means "not
 /// set" (distinct from "set to the type default"), which lets us tell
@@ -301,13 +427,13 @@ where
 {
     let cf = file.map(|lc| &lc.file);
     let host = resolve_string(
-        ENV_HOST,
+        env_var_for("host"),
         flags.host.as_deref(),
         env,
         cf.and_then(|c| c.host.as_deref()),
     );
     let base_url = resolve_string(
-        ENV_BASE_URL,
+        env_var_for("base_url"),
         flags.base_url.as_deref(),
         env,
         cf.and_then(|c| c.base_url.as_deref()),
@@ -317,13 +443,19 @@ where
         cf.and_then(|c| c.api_key_file.as_deref()),
     );
     let insecure = resolve_bool(
-        ENV_INSECURE,
+        env_var_for("insecure"),
         flags.insecure,
         env,
         cf.and_then(|c| c.insecure),
         false,
     );
-    let json = resolve_bool(ENV_JSON, flags.json, env, cf.and_then(|c| c.json), false);
+    let json = resolve_bool(
+        env_var_for("json"),
+        flags.json,
+        env,
+        cf.and_then(|c| c.json),
+        false,
+    );
     // No env source for log_level on purpose: `--log-level` env handling
     // lives in the logger init flow and uses the same
     // `UNIFI_PROTECT_LOG` / `RUST_LOG` string-filter syntax as
@@ -520,7 +652,7 @@ mod tests {
             path: PathBuf::from("/cfg"),
             source: FileDiscoverySource::Flag,
         };
-        let env = env_from([(ENV_HOST, "from-env")]);
+        let env = env_from([("UNIFI_PROTECT_HOST", "from-env")]);
         let r = resolve(&flags, Some(&lc), &env);
         let h = r.host.unwrap();
         assert_eq!(h.value, "from-flag");
@@ -537,11 +669,11 @@ mod tests {
             path: PathBuf::from("/cfg"),
             source: FileDiscoverySource::XdgDefault,
         };
-        let env = env_from([(ENV_HOST, "from-env")]);
+        let env = env_from([("UNIFI_PROTECT_HOST", "from-env")]);
         let r = resolve(&Flags::default(), Some(&lc), &env);
         let h = r.host.unwrap();
         assert_eq!(h.value, "from-env");
-        assert_eq!(h.source, FieldSource::Env(ENV_HOST));
+        assert_eq!(h.source, FieldSource::Env("UNIFI_PROTECT_HOST"));
     }
 
     #[test]
@@ -577,7 +709,7 @@ mod tests {
             path: PathBuf::from("/cfg"),
             source: FileDiscoverySource::XdgDefault,
         };
-        let env = env_from([(ENV_HOST, "")]);
+        let env = env_from([("UNIFI_PROTECT_HOST", "")]);
         let r = resolve(&Flags::default(), Some(&lc), &env);
         // Empty env string is treated as "not set" so the file value
         // wins. Matches the spirit of clap's behavior, where setting

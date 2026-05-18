@@ -671,6 +671,74 @@ fn edit_warns_when_creating_new_file() {
     assert!(cfg_path.exists());
 }
 
+// ----------------- config list -----------------
+
+#[test]
+fn list_prints_one_field_per_line() {
+    let mut cmd = common::isolated_cmd();
+    let out = cmd
+        .args(["config", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8(out.stdout).expect("utf8");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines.contains(&"host"), "lines = {lines:?}");
+    assert!(lines.contains(&"log_level"), "lines = {lines:?}");
+    assert!(lines.contains(&"api_key_file"), "lines = {lines:?}");
+    // Plain mode must produce *only* keys (one per line); no decoration
+    // so shell completion / xargs consumers can rely on the format.
+    for line in &lines {
+        assert!(
+            !line.contains('=') && !line.contains('#'),
+            "decoration leaked into plain output: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn list_does_not_require_a_config_file() {
+    // No --config, no env, no XDG file. `list` is about "what fields
+    // exist", independent of file state.
+    let (_home, mut cmd) = common::cmd_with_tempdir_home();
+    cmd.args(["config", "list"]).assert().success();
+}
+
+#[test]
+fn list_verbose_emits_descriptions() {
+    let mut cmd = common::isolated_cmd();
+    let out = cmd
+        .args(["config", "list", "-v"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("host"), "stdout = {stdout}");
+    assert!(stdout.contains("DESCRIPTION"), "stdout = {stdout}");
+    assert!(stdout.contains("Mutually exclusive"), "stdout = {stdout}");
+}
+
+#[test]
+fn list_json_emits_array_of_entries() {
+    let mut cmd = common::isolated_cmd();
+    let out = cmd
+        .args(["--json=true", "config", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let arr = parsed.as_array().expect("array");
+    assert!(arr.iter().any(|r| r["field"] == "host"));
+    assert!(arr.iter().any(|r| r["field"] == "api_key_file"));
+    for row in arr {
+        assert!(row["description"].is_string());
+        assert!(row["example"].is_string());
+    }
+}
+
 // ----------------- regression: Copilot review fixes -----------------
 
 /// `config show` must not report `--config` as the api_key source --

@@ -152,6 +152,15 @@ ferro-protect config edit host nvr.local   # set a single field; preserves comme
 ferro-protect config edit host --unset     # remove a field
 ferro-protect config delete                # remove the file (prompts for confirmation)
 ferro-protect config delete --yes          # skip the prompt
+ferro-protect config list                  # list recognised field names (one per line)
+ferro-protect config list -v               # field + description table
+```
+
+`config list` is useful for shell completion — e.g.
+
+```sh
+# bash
+complete -W "$(ferro-protect config list)" ferro-protect-config-keys
 ```
 
 `config show`, `config path`, and `config delete` error when the

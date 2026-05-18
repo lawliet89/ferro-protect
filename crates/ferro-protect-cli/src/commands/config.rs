@@ -1,5 +1,5 @@
 //! `ferro-protect config` subcommand: persistent TOML config file
-//! management. Five actions:
+//! management. Six actions:
 //!
 //! - [`Action::Init`] — interactive wizard, or `--template` for a
 //!   commented-out scaffold (non-TTY safe).
@@ -7,6 +7,7 @@
 //! - [`Action::Edit`] — set or unset a single field in the file.
 //! - [`Action::Path`] — print the resolved config file path.
 //! - [`Action::Delete`] — remove the file (confirmation or `--yes`).
+//! - [`Action::List`] — list recognised field names (no file required).
 //!
 //! See `docs/TASK_config_file.md` for the design.
 
@@ -23,70 +24,11 @@ use thiserror::Error;
 use toml_edit::{DocumentMut, value};
 
 use crate::api_key::{self, ApiKeySource};
-use crate::config::{self, ConfigFile, FieldSource, Flags, LoadedConfig, Resolved, ResolvedConfig};
+use crate::config::{
+    self, ConfigFile, FIELDS, FieldSource, FieldType, Flags, LoadedConfig, Resolved,
+    ResolvedConfig, field, is_known_key, known_keys_joined,
+};
 use crate::logging::LogLevel;
-
-/// Single source of truth for the addressable config fields. Drives:
-///   - the `config show <KEY>` / `config edit <KEY>` validators
-///   - the `config init --template` scaffold
-///   - the "valid fields: ..." help text in error messages
-///
-/// `api_key` is addressable in `show` (returns `<set>`/`<unset>`) but
-/// **refused** in `edit` so a raw key never lands on the command line.
-struct FieldMeta {
-    /// Field name as it appears in the TOML file and on the CLI.
-    key: &'static str,
-    /// Comment block (no leading `# `; rendered as one or more `#`-prefixed lines).
-    description: &'static str,
-    /// Example RHS literal, including quotes if the value is a string.
-    example: &'static str,
-}
-
-const FIELDS: &[FieldMeta] = &[
-    FieldMeta {
-        key: "host",
-        description: "NVR hostname or host:port. Mutually exclusive with `base_url`.",
-        example: "\"nvr.local\"",
-    },
-    FieldMeta {
-        key: "base_url",
-        description: "Override the entire base URL. Mutually exclusive with `host`.",
-        example: "\"https://nvr.local/proxy/protect/integration\"",
-    },
-    FieldMeta {
-        key: "api_key_file",
-        description: "Path to a file containing the API key (preferred over inline).",
-        example: "\"~/.config/ferro-protect/api_key\"",
-    },
-    FieldMeta {
-        key: "api_key",
-        description: "Raw API key inline (discouraged -- prefer `api_key_file`).",
-        example: "\"...\"",
-    },
-    FieldMeta {
-        key: "insecure",
-        description: "Skip TLS certificate validation (typical for self-signed NVRs).",
-        example: "false",
-    },
-    FieldMeta {
-        key: "json",
-        description: "Default to JSON output instead of human-readable text.",
-        example: "false",
-    },
-    FieldMeta {
-        key: "log_level",
-        description: "Log level: error | warn | info | debug | trace.",
-        example: "\"warn\"",
-    },
-];
-
-fn is_known_key(key: &str) -> bool {
-    FIELDS.iter().any(|f| f.key == key)
-}
-
-fn known_keys_joined() -> String {
-    FIELDS.iter().map(|f| f.key).collect::<Vec<_>>().join(", ")
-}
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
@@ -139,6 +81,16 @@ pub enum Action {
         /// Skip the confirmation prompt.
         #[arg(long, short = 'y')]
         yes: bool,
+    },
+    /// Print the names of every recognised config field. Doesn't read
+    /// (or require) a config file — answers "what *can* I set?", not
+    /// "what *is* set". Useful for shell completion (`complete -W
+    /// "$(ferro-protect config list)" ...`) and discovery.
+    List {
+        /// Two-column human output: `key <TAB> description`. Without
+        /// `-v` and `--json`, prints one field per line, nothing else.
+        #[arg(long, short = 'v')]
+        verbose: bool,
     },
 }
 
@@ -222,7 +174,55 @@ pub fn run(action: Action, config_flag: Option<&Path>, json: bool) -> Result<(),
         }
         Action::Init { force, template } => init(config_flag, &env, force, template),
         Action::Delete { yes } => delete(config_flag, &env, yes),
+        Action::List { verbose } => list(verbose, json),
     }
+}
+
+// --------------------------------------------------------------------
+// config list
+// --------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct ListEntry {
+    field: &'static str,
+    description: &'static str,
+    example: &'static str,
+}
+
+fn list(verbose: bool, json: bool) -> Result<(), ConfigCmdError> {
+    let stdout = io::stdout();
+    let mut lock = stdout.lock();
+    if json {
+        let rows: Vec<ListEntry> = FIELDS
+            .iter()
+            .map(|f| ListEntry {
+                field: f.key,
+                description: f.description,
+                example: f.example,
+            })
+            .collect();
+        serde_json::to_writer_pretty(&mut lock, &rows)
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
+        lock.write_all(b"\n")
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
+        return Ok(());
+    }
+    if verbose {
+        let rows: Vec<Vec<String>> = FIELDS
+            .iter()
+            .map(|f| vec![f.key.to_owned(), f.description.to_owned()])
+            .collect();
+        lock.write_all(crate::output::table(&["FIELD", "DESCRIPTION"], &rows).as_bytes())
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
+        return Ok(());
+    }
+    // Plain mode: one field per line, nothing else. Optimised for
+    // shell-completion / `xargs` consumption -- the simplest possible
+    // contract for callers that just want the key set.
+    for f in FIELDS {
+        writeln!(lock, "{}", f.key).map_err(|e| ConfigCmdError::Other(e.into()))?;
+    }
+    Ok(())
 }
 
 // --------------------------------------------------------------------
@@ -384,11 +384,7 @@ fn show_one(
 /// we can't borrow it past this function; instead we map it to a known
 /// static. Callers must ensure `key` is in [`FIELDS`].
 fn static_field_name(key: &str) -> &'static str {
-    FIELDS
-        .iter()
-        .map(|f| f.key)
-        .find(|k| *k == key)
-        .unwrap_or("?")
+    field(key).map_or("?", |f| f.key)
 }
 
 fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec<ShowRow> {
@@ -592,29 +588,31 @@ fn initial_doc() -> DocumentMut {
 }
 
 fn apply_edit(doc: &mut DocumentMut, key: &str, raw: &str) -> Result<(), ConfigCmdError> {
-    match key {
-        "host" | "base_url" | "api_key_file" => {
+    // `api_key` is rejected by the caller; every other key in FIELDS
+    // has a parser keyed off `FieldType`. Dispatch on the table rather
+    // than on the magic-string key so adding a field is one FIELDS
+    // entry, not also a new match arm.
+    let meta = field(key).expect("filtered by is_known_key earlier in edit()");
+    match meta.ty {
+        FieldType::String | FieldType::Path => {
             doc[key] = value(raw);
         }
-        "insecure" | "json" => {
+        FieldType::Bool => {
             let b = parse_boolish(raw).ok_or_else(|| ConfigCmdError::InvalidValue {
-                field: static_field_name(key),
+                field: meta.key,
                 value: raw.to_owned(),
                 expected: "true | false (or 1/0, yes/no, on/off)",
             })?;
             doc[key] = value(b);
         }
-        "log_level" => {
+        FieldType::LogLevel => {
             let lv = parse_log_level(raw).ok_or_else(|| ConfigCmdError::InvalidValue {
-                field: "log_level",
+                field: meta.key,
                 value: raw.to_owned(),
                 expected: "error | warn | info | debug | trace",
             })?;
             doc[key] = value(lv.as_str());
         }
-        // `api_key` is rejected above before we get here.
-        "api_key" => unreachable!("api_key rejected before apply_edit"),
-        _ => unreachable!("unknown key filtered by FIELDS gate"),
     }
     Ok(())
 }
