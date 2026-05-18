@@ -14,7 +14,7 @@ use url::Url;
 use crate::auth::{API_KEY_HEADER, ApiKey};
 use crate::error::{Error, Result};
 use crate::models::ApplicationInfo;
-use crate::rate_limit::{AdaptiveLimiter, RateLimitConfig, RateLimitMiddleware};
+use crate::rate_limit::{RateLimitConfig, RateLimitMiddleware};
 use crate::retry::RetryAfterAwareMiddleware;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -77,7 +77,7 @@ impl Default for RetryConfig {
 /// (the underlying `reqwest::Client` is reference-counted) so share one
 /// instance across tasks.
 ///
-/// **Defaults you get for free:** a proactive rate limiter sized to the
+/// **Defaults you get for free:** a proactive rate limiter pinned to the
 /// server's advertised quota (10 requests / 1 second on Protect 7.1.60)
 /// and a retry middleware that honours `Retry-After` on 429 / 5xx for
 /// idempotent reads. Both are configurable on the builder; see
@@ -268,10 +268,9 @@ impl ProtectClientBuilder {
     }
 
     /// Override the proactive rate-limit configuration. `Some(config)`
-    /// installs an adaptive limiter starting at the given capacity and
-    /// growing if the server advertises a larger budget; `None`
-    /// disables the proactive throttle entirely (the retry middleware
-    /// still recovers from any 429s the server returns).
+    /// installs a GCRA limiter (via [`governor`]) pinned to the given
+    /// rate/window; `None` disables the proactive throttle entirely (the
+    /// retry middleware still recovers from any 429s the server returns).
     ///
     /// The default is `Some(RateLimitConfig::default())`, which matches
     /// the policy Protect 7.1.60 advertises (10 requests / 1 second).
@@ -353,9 +352,9 @@ impl ProtectClientBuilder {
         } else {
             Some(RateLimitConfig::default())
         };
-        // Build one `AdaptiveLimiter` (shared semaphore) used by both
-        // http_read and http_write middleware stacks.
-        let opt_limiter = effective_rate_limit.as_ref().map(AdaptiveLimiter::new);
+        // One shared GCRA limiter, cloned into both middleware stacks so
+        // reads and writes share a single budget.
+        let opt_limiter = effective_rate_limit.as_ref().map(RateLimitMiddleware::new);
 
         // `RateLimitMiddleware` is stacked *inside* (after) the retry
         // middleware so every retry attempt acquires a fresh permit.
@@ -365,9 +364,7 @@ impl ProtectClientBuilder {
             let mut builder =
                 MiddlewareClientBuilder::new(reqwest_client.clone()).with(retry_middleware.clone());
             if let Some(ref limiter) = opt_limiter {
-                builder = builder.with(RateLimitMiddleware {
-                    limiter: limiter.clone(),
-                });
+                builder = builder.with(limiter.clone());
             }
             builder.build()
         };
@@ -378,22 +375,14 @@ impl ProtectClientBuilder {
                 builder = builder.with(retry_middleware);
             }
             if let Some(limiter) = opt_limiter {
-                builder = builder.with(RateLimitMiddleware { limiter });
+                builder = builder.with(limiter);
             }
             builder.build()
         };
 
         let rate_limit_label = match (&effective_rate_limit, self.rate_limit_overridden) {
-            (Some(cfg), true) => format!(
-                "custom ({}/{}ms)",
-                cfg.initial_capacity,
-                cfg.window.as_millis()
-            ),
-            (Some(cfg), false) => format!(
-                "default ({}/{}ms)",
-                cfg.initial_capacity,
-                cfg.window.as_millis()
-            ),
+            (Some(cfg), true) => format!("custom ({}/{}ms)", cfg.rate, cfg.per.as_millis()),
+            (Some(cfg), false) => format!("default ({}/{}ms)", cfg.rate, cfg.per.as_millis()),
             (None, _) => "disabled".to_string(),
         };
 
