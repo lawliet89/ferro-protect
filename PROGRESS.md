@@ -605,9 +605,11 @@ correctly anticipated that the codebase used none of the patterns
 identifiers, `impl Trait` returns in hand-written code). `typify`'s
 generated `$OUT_DIR/generated.rs` compiles clean under 2024 with no
 post-processing. The visible source change came from rustfmt: with
-`edition = "2024"` it reorders `use` lists by full path with
-sub-imports first (e.g. `use serde::de::DeserializeOwned;` now
-sorts before `use serde::Serialize;`).
+`edition = "2024"` it reorders `use` lists by ASCII-lexicographic
+order, which places items at the current path level before items
+in nested submodules (e.g. `use serde::Serialize;` now sorts before
+`use serde::de::DeserializeOwned;`, because `S` (0x53) precedes
+`d` (0x64)).
 
 Adopted the targeted 2024 ergonomics the plan flagged as
 high-payoff for this codebase:
@@ -641,10 +643,11 @@ high-payoff for this codebase:
 - `crates/ferro-protect-cli/tests/api_key.rs` and
   `crates/ferro-protect/tests/model_codegen.rs` (removed two
   `#[allow(dead_code)]` attributes — the new
-  `clippy::allow_attributes` lint correctly flagged them as
-  unfulfilled; `_seam_signatures` and `_ensure_write_in_scope`
-  do not actually trigger the `dead_code` lint under the current
-  compiler)
+  `clippy::allow_attributes` lint nudged the conversion to
+  `#[expect]`, which then surfaced the
+  `unfulfilled_lint_expectations` lint, proving the underlying
+  `dead_code` lint never actually fired on `_seam_signatures` or
+  `_ensure_write_in_scope` under the current compiler)
 - `PROGRESS.md` (this entry)
 
 **Decisions / deviations**:
@@ -674,8 +677,8 @@ high-payoff for this codebase:
   attributes can be re-added then.
 - Did not touch `PLAN.md` line 98 (`rustfmt.toml: edition =
   "2021"` in the phase 0 description) — that line is a historical
-  record of what phase 0 created, not a live spec. Same reasoning
-  AGENT.md applies to PROGRESS.md.
+  record of what phase 0 created, not a live spec. The same
+  reasoning AGENT.md applies to PROGRESS.md applies here.
 - Did not bump the README "Requires Rust" line — the README does
   not state an MSRV at all; the canonical source is
   `workspace.package.rust-version`.

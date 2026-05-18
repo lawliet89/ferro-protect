@@ -2,13 +2,19 @@
 
 ## Why
 
-Edition 2021 is two editions behind. Staying on it means newer
-ergonomics (`if let` chains, `#[expect]`, the `prelude` additions for
-`Future` / `IntoFuture`, MSRV-aware dependency resolution under
-`resolver = "3"`) are unavailable, and lints that catch genuine
-foot-guns — most notably the now-`unsafe` `std::env::set_var` /
-`remove_var` — do not fire even though `#![forbid(unsafe_code)]` is
-in place across the workspace.
+Edition 2021 is one edition behind. Staying on it leaves the
+*edition-gated* changes off the table — chiefly the new prelude
+additions (`Future` / `IntoFuture`), the now-`unsafe`
+`std::env::set_var` / `remove_var` (which pairs naturally with the
+existing `#![forbid(unsafe_code)]` invariant), and the 2024 style
+edition for rustfmt. The bump is also a convenient moment to
+opt into adjacent *non-edition* changes the project has been
+carrying forward by inertia: MSRV-aware Cargo dependency
+resolution (`resolver = "3"`, available since Rust 1.84) and the
+`#[expect]` attribute (compiler-gated, stable since Rust 1.81).
+None of those second-bucket changes *require* the edition flip
+— bundling them just means they all land in one reviewable commit
+instead of trickling in over follow-up chores.
 
 The cost of doing it now is small. The codebase is pre-0.1.0 with no
 external consumers, so a `rust-version` bump is free. A survey of the
@@ -157,7 +163,7 @@ leave alone.
 
 | Feature | Where it pays here | Do it? |
 |---|---|---|
-| `if let` chains (stable in 1.88, 2024-clean) | `api_key::resolve` has three nested precedence steps that read more clearly as `if let Some(x) = a && let Ok(y) = b`. | Yes — small, local |
+| `if let` chains (require Rust 1.88) | Gated by MSRV — this chore pins `rust-version = "1.85"`, so let-chains are unavailable regardless. Re-evaluate when MSRV reaches 1.88; on closer reading `api_key::resolve` is also sequential early-return precedence rather than the nested `if let A { if let B { ... } }` shape that let-chains flatten, so the payoff may be smaller than first thought. | No (MSRV-gated; see this chore's PROGRESS entry) |
 | `#[expect(...)]` attribute (stable 1.81) | Replace `#[allow(dead_code)]` on the unused `post_json`/`patch_json`/`send_no_content`/`get_bytes` helpers in `client.rs` with `#[expect(dead_code, reason = "wired up in phases 5-8")]`. If the allow becomes wrong (because phase 5 actually wires it up and the lint stops firing), `expect` flips to a warning and the stale attribute gets cleaned up automatically. | Yes — same line count, better signal |
 | `prelude` adds `Future` / `IntoFuture` | The codebase has no explicit `use std::future::Future` lines (`grep` confirms). Nothing to remove. | No |
 | `std::sync::LazyLock` over `once_cell::sync::Lazy` | The codebase uses neither. No payoff today; revisit if a phase introduces a global cache. | No |
@@ -173,9 +179,11 @@ satisfied + small ergonomic wins."
 
 ### 6. Lints to enable after the flip
 
-Edition 2024 ships several lints that are off-by-default and worth
-turning on for a young codebase. Add to `[workspace.lints.rust]` in
-`Cargo.toml`:
+Edition 2024 changes the *default level* of a few lints (most
+notably `unsafe_op_in_unsafe_fn`, which becomes warn-by-default
+under 2024). The chore also adopts a couple of Clippy lints that
+aren't edition-gated but pay off once `#[expect]` is in routine
+use. Add to `[workspace.lints.rust]` in `Cargo.toml`:
 
 ```toml
 unsafe_op_in_unsafe_fn = "deny"   # belt-and-braces alongside `unsafe_code = "forbid"`
@@ -261,9 +269,11 @@ The chore is done when:
   `resolver` is `"3"`.
 - `cargo fix --edition` has been run and the diff reviewed.
 - All four gates are green on the branch.
-- The two ergonomic adoptions in step 5 (`if let` chains in the
-  key resolver, `#[expect]` on the dead-code helpers) are applied.
-- The two lint additions in step 6 are present and the workspace
+- The `#[expect]` adoption from step 5 (parked HTTP helpers in
+  `client.rs`) is applied. (Let-chains adoption is MSRV-gated and
+  was reconsidered during implementation — see this chore's
+  PROGRESS entry.)
+- The lint additions in step 6 are present and the workspace
   builds clean under them.
 - `PROGRESS.md` has the chore entry.
 - One signed commit on a `chore/edition-2024` branch. No push.

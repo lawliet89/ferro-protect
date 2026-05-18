@@ -172,7 +172,7 @@ The current state. Updated whenever the structure changes.
 
 | Path | What |
 |---|---|
-| [Cargo.toml](Cargo.toml) | Workspace manifest. Shared `[workspace.dependencies]`, lints (`pedantic + nursery`, `unsafe_code = "forbid"`), `[profile.dev.package]` overrides for insta+similar. |
+| [Cargo.toml](Cargo.toml) | Workspace manifest. Shared `[workspace.dependencies]`, lint policy (`pedantic + nursery` warn; `unsafe_code = "forbid"`, `unsafe_op_in_unsafe_fn = "deny"`, `unused_lifetimes = "warn"`; `clippy::doc_markdown = "allow"`; `clippy::allow_attributes{,_without_reason}` push `#[allow]` → `#[expect]` and require `reason = "..."`), `resolver = "3"` for MSRV-aware dep resolution, `[profile.dev.package]` overrides for insta+similar. |
 | [rust-toolchain.toml](rust-toolchain.toml) | Pins stable channel + components. |
 | [rustfmt.toml](rustfmt.toml) | `edition = "2024"`, `max_width = 100`. |
 | [deny.toml](deny.toml) | License allow-list, advisory checks, source allow-list (includes the unifi-apis submodule URL). |
