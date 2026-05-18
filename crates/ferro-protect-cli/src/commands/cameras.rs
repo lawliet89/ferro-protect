@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::{Subcommand, ValueEnum};
 use ferro_protect::ProtectClient;
-use ferro_protect::models::{Camera, CameraId, SnapshotChannel, SnapshotOptions};
+use ferro_protect::models::{
+    Camera, CameraId, ChannelQuality, RtspsStream, SnapshotChannel, SnapshotOptions,
+};
 use is_terminal::IsTerminal;
 
 use crate::output;
@@ -20,6 +22,18 @@ pub enum Action {
     Get {
         /// Camera ID.
         id: String,
+    },
+    /// Create RTSPS stream URLs for a camera. Returns one URL per
+    /// requested quality level. The server allocates new stream
+    /// credentials on each call.
+    Rtsps {
+        /// Camera ID.
+        id: String,
+        /// Comma-separated qualities (any of `high`, `medium`, `low`,
+        /// `package`). Order is preserved in the output. `package`
+        /// only works for cameras with a package camera.
+        #[arg(long, value_delimiter = ',', default_value = "high")]
+        quality: Vec<QualityArg>,
     },
     /// Fetch a JPEG snapshot from a camera. Writes the bytes to
     /// `--out PATH` if given; otherwise to stdout if stdout is not
@@ -59,6 +73,28 @@ impl From<ChannelArg> for SnapshotChannel {
     }
 }
 
+/// CLI-facing quality enum. Maps 1:1 onto [`ChannelQuality`] but
+/// kept separate so we can keep `clap::ValueEnum` derivation off the
+/// library type.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum QualityArg {
+    High,
+    Medium,
+    Low,
+    Package,
+}
+
+impl From<QualityArg> for ChannelQuality {
+    fn from(value: QualityArg) -> Self {
+        match value {
+            QualityArg::High => Self::High,
+            QualityArg::Medium => Self::Medium,
+            QualityArg::Low => Self::Low,
+            QualityArg::Package => Self::Package,
+        }
+    }
+}
+
 /// Dispatch `cameras` subcommands.
 ///
 /// # Errors
@@ -78,6 +114,17 @@ pub async fn run(client: &ProtectClient, action: Action, json: bool) -> Result<(
                 .await
                 .with_context(|| format!("fetching camera {id}"))?;
             output::emit_stdout(&camera, json, || render_one(&camera))?;
+        }
+        Action::Rtsps { id, quality } => {
+            let id = CameraId::from(id);
+            let qualities: Vec<ChannelQuality> =
+                quality.into_iter().map(ChannelQuality::from).collect();
+            let streams = client
+                .cameras()
+                .rtsps_stream(&id, &qualities)
+                .await
+                .with_context(|| format!("creating RTSPS streams for camera {id}"))?;
+            output::emit_stdout(&streams, json, || render_rtsps_streams(&streams))?;
         }
         Action::Snapshot {
             id,
@@ -140,6 +187,18 @@ fn render_table(cameras: &[Camera]) -> String {
                 c.state.to_string(),
             ]
         })
+        .collect();
+    output::table(headers, &rows)
+}
+
+fn render_rtsps_streams(streams: &[RtspsStream]) -> String {
+    if streams.is_empty() {
+        return "(no streams returned)\n".to_string();
+    }
+    let headers = &["QUALITY", "URL"];
+    let rows: Vec<Vec<String>> = streams
+        .iter()
+        .map(|s| vec![s.quality.to_string(), s.url.clone()])
         .collect();
     output::table(headers, &rows)
 }

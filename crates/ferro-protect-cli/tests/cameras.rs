@@ -9,7 +9,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FIXTURE_EMPTY_LIST: &str = "[]";
@@ -178,4 +178,73 @@ async fn cameras_snapshot_forwards_channel_and_high_quality_flags() {
     // mount-time `.verify()` on drop if the CLI did not send the
     // expected query string. `.success()` here is enough.
     assert.success();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_rtsps_default_quality_high() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/rtsps-stream"))
+        .and(body_json(serde_json::json!({ "qualities": ["high"] })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"high":"rtsps://nvr/cam-abc-high"}"#)
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    let assert = tokio::task::spawn_blocking(move || {
+        run_cmd(&base_url, &["--json", "cameras", "rtsps", "abc"])
+    })
+    .await
+    .expect("spawn_blocking");
+
+    assert
+        .success()
+        .stdout(predicate::str::contains("rtsps://nvr/cam-abc-high"))
+        .stdout(predicate::str::contains(r#""quality": "high""#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_rtsps_multiple_qualities_preserve_request_order() {
+    let server = MockServer::start().await;
+    // Request `low,high` -- output must list `low` first then `high`,
+    // even though the JSON response orders them differently.
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/rtsps-stream"))
+        .and(body_json(
+            serde_json::json!({ "qualities": ["low", "high"] }),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"high":"rtsps://nvr/cam-abc-high","low":"rtsps://nvr/cam-abc-low"}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    let assert = tokio::task::spawn_blocking(move || {
+        run_cmd(
+            &base_url,
+            &["cameras", "rtsps", "abc", "--quality", "low,high"],
+        )
+    })
+    .await
+    .expect("spawn_blocking");
+
+    let output = assert.success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    let low_idx = stdout.find("cam-abc-low").expect("low URL present");
+    let high_idx = stdout.find("cam-abc-high").expect("high URL present");
+    assert!(
+        low_idx < high_idx,
+        "expected low row before high (request order); stdout:\n{stdout}"
+    );
 }

@@ -368,3 +368,44 @@ async fn live_read_cameras_snapshot() {
         first.name
     );
 }
+
+#[tokio::test]
+async fn live_read_cameras_rtsps_stream() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_rtsps_stream: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    let Some(first) = cameras.first() else {
+        println!("(skipping live_read_cameras_rtsps_stream: NVR has no cameras)");
+        return;
+    };
+    let streams = client
+        .cameras()
+        .rtsps_stream(&first.id, &[ferro_protect::models::ChannelQuality::High])
+        .await
+        .expect("rtsps_stream call succeeded");
+    assert!(
+        !streams.is_empty(),
+        "expected at least one RTSPS URL for camera {}",
+        first.id
+    );
+    for s in &streams {
+        assert!(
+            s.url.starts_with("rtsps://"),
+            "unexpected URL scheme for quality {:?}: {}",
+            s.quality,
+            s.url
+        );
+        println!(
+            "live_read_cameras_rtsps_stream: camera {} quality={} url_len={}",
+            first.id,
+            s.quality,
+            s.url.len()
+        );
+    }
+}

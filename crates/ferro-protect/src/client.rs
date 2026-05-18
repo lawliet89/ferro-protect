@@ -129,7 +129,6 @@ impl ProtectClient {
     // payloads). Keeping them here means each future endpoint is a
     // one-line wrapper rather than a one-helper-plus-one-line churn.
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,

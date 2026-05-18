@@ -14,8 +14,8 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::generated::{
-    Camera, CameraId, Chime, ChimeId, Light, LightId, Liveview, LiveviewId, Nvr, NvrId,
-    ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer, ViewerId,
+    Camera, CameraId, ChannelQuality, Chime, ChimeId, Light, LightId, Liveview, LiveviewId, Nvr,
+    NvrId, ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer, ViewerId,
 };
 
 /// Optional query parameters for [`crate::CamerasApi::snapshot_with`].
@@ -33,6 +33,20 @@ pub struct SnapshotOptions {
     /// Force 1080P or higher resolution snapshot. Spec query param
     /// `highQuality=true`.
     pub high_quality: bool,
+}
+
+/// One RTSPS stream URL paired with the quality level it was created
+/// for. Returned by [`crate::CamerasApi::rtsps_stream`].
+///
+/// The underlying API returns a flat object with one optional field
+/// per quality (`high` / `medium` / `low` / `package`); this wrapper
+/// flattens it into a vec so callers can iterate without checking
+/// four `Option`s. Only the qualities the caller actually requested
+/// will appear in the returned vec.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RtspsStream {
+    pub quality: ChannelQuality,
+    pub url: String,
 }
 
 /// Application metadata returned by `GET /v1/meta/info`.

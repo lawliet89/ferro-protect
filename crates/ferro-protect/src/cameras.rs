@@ -2,10 +2,12 @@
 
 use bytes::Bytes;
 use log::info;
+use serde::Serialize;
 
 use crate::client::ProtectClient;
 use crate::error::Result;
-use crate::models::{Camera, CameraId, SnapshotOptions};
+use crate::generated::CreatedRtspsStreams;
+use crate::models::{Camera, CameraId, ChannelQuality, RtspsStream, SnapshotOptions};
 
 /// Camera-scoped API entry point. Cheap to construct; holds a borrow
 /// of the [`ProtectClient`] that issued it.
@@ -82,6 +84,75 @@ impl<'a> CamerasApi<'a> {
         );
         Ok(bytes)
     }
+
+    /// `POST /v1/cameras/{id}/rtsps-stream`. Create one RTSPS stream
+    /// URL per requested quality level.
+    ///
+    /// HTTP verb is POST per the spec (the server allocates stream
+    /// credentials), but no persistent NVR state is mutated — this
+    /// is grouped with the read-shaped endpoints in phase 5. The
+    /// matching DELETE for tearing down a stream lives in a later
+    /// phase.
+    ///
+    /// `qualities` must be non-empty; the server rejects an empty
+    /// list with a 4xx. `ChannelQuality::Package` is only valid for
+    /// cameras with `hasPackageCamera: true`.
+    ///
+    /// The returned vec preserves the order in `qualities` and only
+    /// contains entries the server actually populated.
+    ///
+    /// # Errors
+    /// [`Error`] -- typically `Http`, `Api { status: 404, .. }` for
+    /// an unknown camera, or `Api { status: 400, .. }` for an empty
+    /// or unsupported quality list.
+    pub async fn rtsps_stream(
+        &self,
+        id: &CameraId,
+        qualities: &[ChannelQuality],
+    ) -> Result<Vec<RtspsStream>> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            qualities: &'a [ChannelQuality],
+        }
+        let path = format!("/v1/cameras/{id}/rtsps-stream");
+        let created: CreatedRtspsStreams = self.client.post_json(&path, &Body { qualities }).await?;
+        let streams = streams_in_request_order(qualities, &created);
+        info!(
+            "created {} RTSPS stream URL(s) for camera {id} (requested {} qualit{})",
+            streams.len(),
+            qualities.len(),
+            if qualities.len() == 1 { "y" } else { "ies" }
+        );
+        Ok(streams)
+    }
+}
+
+/// Map the API's flat-object response into a vec ordered by the
+/// caller's request. Entries the server returned `None` for are
+/// silently dropped — the alternative (returning them as
+/// `Option<String>` inside `RtspsStream`) would push that nullable
+/// edge case onto every caller for no real benefit, since callers
+/// that asked for `[High, Low]` want either a usable URL or an
+/// indication the server didn't honour that quality.
+fn streams_in_request_order(
+    requested: &[ChannelQuality],
+    created: &CreatedRtspsStreams,
+) -> Vec<RtspsStream> {
+    requested
+        .iter()
+        .filter_map(|q| {
+            let url = match q {
+                ChannelQuality::High => created.high.as_ref(),
+                ChannelQuality::Medium => created.medium.as_ref(),
+                ChannelQuality::Low => created.low.as_ref(),
+                ChannelQuality::Package => created.package.as_ref(),
+            }?;
+            Some(RtspsStream {
+                quality: *q,
+                url: url.clone(),
+            })
+        })
+        .collect()
 }
 
 impl ProtectClient {
