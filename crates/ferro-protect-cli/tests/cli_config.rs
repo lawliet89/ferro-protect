@@ -739,6 +739,42 @@ fn list_json_emits_array_of_entries() {
     }
 }
 
+// ----------------- tilde expansion at load -----------------
+
+/// The wizard suggests `~/.config/ferro-protect/api_key` as the
+/// default `api_key_file`; the runtime resolver later tries to read
+/// that path. Without expansion, `std::fs::read_to_string("~/...")`
+/// would fail. Verify the loader expands tilde so `config show
+/// api_key_file` reports an absolute path that matches `$HOME/...`.
+#[test]
+fn load_expands_tilde_in_api_key_file_so_runtime_can_read_it() {
+    let (home, mut cmd) = common::cmd_with_tempdir_home();
+    let cfg_dir = home.path().join(".config").join("ferro-protect");
+    fs::create_dir_all(&cfg_dir).expect("mkdir");
+    let cfg_path = cfg_dir.join("config.toml");
+    fs::write(
+        &cfg_path,
+        "host = \"nvr.local\"\napi_key_file = \"~/keys/protect\"\n",
+    )
+    .expect("write");
+
+    let out = cmd
+        .args(["config", "show", "api_key_file"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8(out.stdout).expect("utf8");
+    let expected = home.path().join("keys").join("protect");
+    assert_eq!(
+        stdout.trim_end(),
+        expected.display().to_string(),
+        "tilde was not expanded by the loader",
+    );
+    // Sanity: no literal `~` remains.
+    assert!(!stdout.contains('~'), "tilde leaked through: {stdout}");
+}
+
 // ----------------- security hardening -----------------
 
 #[cfg(unix)]
