@@ -739,6 +739,88 @@ fn list_json_emits_array_of_entries() {
     }
 }
 
+// ----------------- security hardening -----------------
+
+#[cfg(unix)]
+#[test]
+fn edit_writes_new_file_with_0600_perms() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let cfg_path = dir.path().join("new.toml");
+    let mut cmd = common::isolated_cmd();
+    cmd.args([
+        "--config",
+        cfg_path.to_str().unwrap(),
+        "config",
+        "edit",
+        "host",
+        "nvr.local",
+    ])
+    .assert()
+    .success();
+    let perms = fs::metadata(&cfg_path).expect("metadata").permissions();
+    let mode = perms.mode() & 0o777;
+    // Owner-read+write only -- no group, no world. The atomic
+    // temp-write helper opens with mode 0o600 at creation, no
+    // chmod-after-write window.
+    assert_eq!(mode, 0o600, "got 0o{mode:o}");
+}
+
+#[cfg(unix)]
+#[test]
+fn init_template_writes_with_0600_perms() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let cfg_path = dir.path().join("scaffold.toml");
+    let mut cmd = common::isolated_cmd();
+    cmd.args([
+        "--config",
+        cfg_path.to_str().unwrap(),
+        "config",
+        "init",
+        "--template",
+    ])
+    .assert()
+    .success();
+    let mode = fs::metadata(&cfg_path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "got 0o{mode:o}");
+}
+
+#[cfg(unix)]
+#[test]
+fn edit_atomic_write_does_not_leave_tmp_file() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "edit",
+        "host",
+        "new",
+    ])
+    .assert()
+    .success();
+    // After a successful edit, no temp sibling should remain. The
+    // temp file is named `.<basename>.tmp.<pid>` next to the target.
+    let parent = cfg.path().parent().expect("parent");
+    let leftovers: Vec<_> = fs::read_dir(parent)
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "stale temp files: {:?}",
+        leftovers.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
+}
+
 // ----------------- regression: Copilot review fixes -----------------
 
 /// `config show` must not report `--config` as the api_key source --

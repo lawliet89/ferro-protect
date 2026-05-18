@@ -121,10 +121,18 @@ where
         return Ok((read_key_file(path, warnings)?, ApiKeySource::Flag));
     }
     if let Some(path) = env(ENV_KEY_FILE) {
-        return Ok((
-            read_key_file(Path::new(&path), warnings)?,
-            ApiKeySource::EnvFile,
-        ));
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok((
+                read_key_file(Path::new(trimmed), warnings)?,
+                ApiKeySource::EnvFile,
+            ));
+        }
+        // Empty env var falls through (same rule the raw-key branch
+        // below applies, and the same rule `config::resolve_string`
+        // uses for the host/base_url/etc. env vars). Without this,
+        // `UNIFI_PROTECT_API_KEY_FILE=""` would try to read an empty
+        // path and error noisily.
     }
     if let Some(raw) = env(ENV_KEY) {
         let trimmed = raw.trim();
@@ -134,9 +142,7 @@ where
                 ApiKeySource::EnvRaw,
             ));
         }
-        // An empty env var falls through to the lower-priority sources
-        // (matches the spirit of "empty env == not set" that
-        // `config::resolve_string` uses).
+        // Empty env falls through to the lower-priority sources.
     }
     if let Some(path) = sources.config_file {
         return Ok((read_key_file(path, warnings)?, ApiKeySource::ConfigFile));

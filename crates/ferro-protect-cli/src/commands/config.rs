@@ -289,7 +289,13 @@ where
     if flag_file.is_some() {
         return Some(ApiKeySource::Flag);
     }
-    if env(api_key::ENV_KEY_FILE).is_some() {
+    // Mirror the empty-env-falls-through rule from `api_key::resolve`
+    // (and `config::resolve_string`): `UNIFI_PROTECT_API_KEY_FILE=""`
+    // is treated as "not set" so we don't falsely report `<set>` from
+    // an env var that would otherwise blow up at runtime.
+    if let Some(path) = env(api_key::ENV_KEY_FILE)
+        && !path.trim().is_empty()
+    {
         return Some(ApiKeySource::EnvFile);
     }
     if let Some(raw) = env(api_key::ENV_KEY)
@@ -658,6 +664,13 @@ fn validate_doc(doc: &DocumentMut, just_edited: &str) -> Result<(), ConfigCmdErr
     })
 }
 
+/// Write `doc` to `path` atomically: serialize to a sibling
+/// `.<name>.tmp.<pid>`, fsync, then `rename` over the destination.
+/// The temp file is opened with mode `0o600` on Unix at creation, so
+/// there is no TOCTOU window where the secret-bearing file exists
+/// with default umask perms. The rename is atomic on POSIX filesystems
+/// (and across the same-directory case on Windows via `MoveFileEx`'s
+/// default semantics, which `fs::rename` exposes).
 fn write_doc(path: &Path, doc: &DocumentMut) -> Result<(), ConfigCmdError> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -668,24 +681,59 @@ fn write_doc(path: &Path, doc: &DocumentMut) -> Result<(), ConfigCmdError> {
         })?;
     }
     let serialized = doc.to_string();
-    fs::write(path, serialized).map_err(|source| ConfigCmdError::Io {
-        path: path.to_path_buf(),
+    let tmp = tmp_sibling(path);
+    write_file_secure(&tmp, serialized.as_bytes()).map_err(|source| ConfigCmdError::Io {
+        path: tmp.clone(),
         source,
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // Tighten perms when we just created the file. If a user
-        // hand-set looser perms previously we don't override -- only
-        // tighten if currently world/group accessible.
-        if let Ok(meta) = fs::metadata(path) {
-            let mode = meta.permissions().mode();
-            if mode & 0o077 != 0 {
-                let _ = fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-            }
-        }
+    if let Err(source) = fs::rename(&tmp, path) {
+        // Best-effort cleanup; the rename error is what the caller cares about.
+        let _ = fs::remove_file(&tmp);
+        return Err(ConfigCmdError::Io {
+            path: path.to_path_buf(),
+            source,
+        });
     }
     Ok(())
+}
+
+/// Build a per-process temp-file path next to `path`. We use the
+/// destination's directory (not `std::env::temp_dir()`) so the rename
+/// stays within one filesystem and remains atomic.
+fn tmp_sibling(path: &Path) -> PathBuf {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let file_name = path
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_default();
+    let mut name = std::ffi::OsString::from(".");
+    name.push(&file_name);
+    name.push(format!(".tmp.{}", std::process::id()));
+    parent.map_or_else(|| PathBuf::from(&name), |p| p.join(&name))
+}
+
+/// Create-or-truncate `path` with mode 0600 on Unix at creation time
+/// (no chmod-after-write window) and write `contents`. On non-Unix,
+/// falls back to `fs::write` (Windows doesn't honour Unix mode bits).
+fn write_file_secure(path: &Path, contents: &[u8]) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents)
+    }
 }
 
 fn parse_boolish(s: &str) -> Option<bool> {
@@ -817,7 +865,17 @@ where
             p.set_file_name(name);
             p
         };
-        fs::copy(&target_path, &bak).map_err(|source| ConfigCmdError::Io {
+        // Copy via read + `write_file_secure` rather than `fs::copy`.
+        // `fs::copy` preserves the source's mode, which is wrong if the
+        // user hand-created the original at 0644 and embedded a raw
+        // `api_key` -- the backup would leak the key under default
+        // perms. Re-writing through `write_file_secure` always lands
+        // at 0o600 on Unix at creation, no chmod-after-write window.
+        let contents = fs::read(&target_path).map_err(|source| ConfigCmdError::Io {
+            path: target_path.clone(),
+            source,
+        })?;
+        write_file_secure(&bak, &contents).map_err(|source| ConfigCmdError::Io {
             path: bak.clone(),
             source,
         })?;
@@ -1008,14 +1066,19 @@ fn write_key_file(path: &Path, key: &str) -> Result<(), ConfigCmdError> {
             source,
         })?;
     }
-    fs::write(path, key).map_err(|source| ConfigCmdError::Io {
-        path: path.to_path_buf(),
+    // Use the atomic temp-write + rename helper from `write_doc` so the
+    // key file is never visible at default umask perms, even briefly.
+    let tmp = tmp_sibling(path);
+    write_file_secure(&tmp, key.as_bytes()).map_err(|source| ConfigCmdError::Io {
+        path: tmp.clone(),
         source,
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    if let Err(source) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(ConfigCmdError::Io {
+            path: path.to_path_buf(),
+            source,
+        });
     }
     Ok(())
 }

@@ -153,6 +153,32 @@ fn trims_trailing_whitespace_from_file_contents() {
 }
 
 #[test]
+fn empty_env_key_file_falls_through_to_not_provided() {
+    // Regression for the Copilot review finding: empty
+    // `UNIFI_PROTECT_API_KEY_FILE` used to be treated as "set" and
+    // would attempt to read an empty path. Now empty/whitespace is
+    // skipped to match the raw-env-key and host-env-string rules.
+    let env = env_from([(api_key::ENV_KEY_FILE, "   ")]);
+    let mut warnings = Vec::new();
+    let err = api_key::resolve(&Sources::default(), &env, &mut warnings).expect_err("errors");
+    assert!(matches!(err, ApiKeyError::NotProvided));
+}
+
+#[test]
+fn empty_env_key_file_falls_through_to_config_file_source() {
+    let (_d, path) = write_key_file("from-config-file");
+    let env = env_from([(api_key::ENV_KEY_FILE, "")]);
+    let sources = Sources {
+        config_file: Some(&path),
+        ..Sources::default()
+    };
+    let mut warnings = Vec::new();
+    let (key, source) = api_key::resolve(&sources, &env, &mut warnings).expect("resolves");
+    assert_eq!(key.expose_secret(), "from-config-file");
+    assert_eq!(source, ApiKeySource::ConfigFile);
+}
+
+#[test]
 fn empty_raw_env_falls_through_to_not_provided() {
     let env = env_from([(ENV_KEY, "   \n")]);
     let mut warnings = Vec::new();
@@ -264,9 +290,13 @@ fn no_warning_on_tight_file_permissions() {
 /// Sanity: the CLI binary itself rejects the call when no key is provided.
 #[test]
 fn binary_rejects_when_no_key_provided() {
-    use assert_cmd::Command;
-    let assert = Command::cargo_bin("ferro-protect")
-        .expect("binary")
+    // Use the shared isolation helper so the developer's own
+    // `~/.config/ferro-protect/config.toml` (or any `UNIFI_PROTECT_*`
+    // env vars) cannot leak into the test. The per-var `env_remove`
+    // calls below are now redundant with `isolated_cmd()`'s scrubbing
+    // but kept as documentation of intent.
+    let mut cmd = common::isolated_cmd();
+    let assert = cmd
         .env_remove(ENV_KEY)
         .env_remove(ENV_KEY_FILE)
         .env_remove("UNIFI_PROTECT_HOST")
