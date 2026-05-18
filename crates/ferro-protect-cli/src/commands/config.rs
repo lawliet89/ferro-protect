@@ -1,10 +1,12 @@
 //! `ferro-protect config` subcommand: persistent TOML config file
-//! management. Four actions:
+//! management. Five actions:
 //!
-//! - [`Action::Init`] — interactive wizard.
+//! - [`Action::Init`] — interactive wizard, or `--template` for a
+//!   commented-out scaffold (non-TTY safe).
 //! - [`Action::Show`] — print effective config + source attribution.
 //! - [`Action::Edit`] — set or unset a single field in the file.
 //! - [`Action::Path`] — print the resolved config file path.
+//! - [`Action::Delete`] — remove the file (confirmation or `--yes`).
 //!
 //! See `docs/TASK_config_file.md` for the design.
 
@@ -24,27 +26,81 @@ use crate::api_key::{self, ApiKeySource};
 use crate::config::{self, ConfigFile, FieldSource, Flags, LoadedConfig, Resolved, ResolvedConfig};
 use crate::logging::LogLevel;
 
-/// The five string-valued fields the user can address via
-/// `config show <KEY>` and `config edit <KEY> <VALUE>`. `api_key` is
-/// addressable in `show` (returns `<set>`/`<unset>`) but **refused** in
-/// `edit` so a raw key never lands on the command line.
-const KNOWN_KEYS: &[&str] = &[
-    "host",
-    "base_url",
-    "api_key_file",
-    "api_key",
-    "insecure",
-    "json",
-    "log_level",
+/// Single source of truth for the addressable config fields. Drives:
+///   - the `config show <KEY>` / `config edit <KEY>` validators
+///   - the `config init --template` scaffold
+///   - the "valid fields: ..." help text in error messages
+///
+/// `api_key` is addressable in `show` (returns `<set>`/`<unset>`) but
+/// **refused** in `edit` so a raw key never lands on the command line.
+struct FieldMeta {
+    /// Field name as it appears in the TOML file and on the CLI.
+    key: &'static str,
+    /// Comment block (no leading `# `; rendered as one or more `#`-prefixed lines).
+    description: &'static str,
+    /// Example RHS literal, including quotes if the value is a string.
+    example: &'static str,
+}
+
+const FIELDS: &[FieldMeta] = &[
+    FieldMeta {
+        key: "host",
+        description: "NVR hostname or host:port. Mutually exclusive with `base_url`.",
+        example: "\"nvr.local\"",
+    },
+    FieldMeta {
+        key: "base_url",
+        description: "Override the entire base URL. Mutually exclusive with `host`.",
+        example: "\"https://nvr.local/proxy/protect/integration\"",
+    },
+    FieldMeta {
+        key: "api_key_file",
+        description: "Path to a file containing the API key (preferred over inline).",
+        example: "\"~/.config/ferro-protect/api_key\"",
+    },
+    FieldMeta {
+        key: "api_key",
+        description: "Raw API key inline (discouraged -- prefer `api_key_file`).",
+        example: "\"...\"",
+    },
+    FieldMeta {
+        key: "insecure",
+        description: "Skip TLS certificate validation (typical for self-signed NVRs).",
+        example: "false",
+    },
+    FieldMeta {
+        key: "json",
+        description: "Default to JSON output instead of human-readable text.",
+        example: "false",
+    },
+    FieldMeta {
+        key: "log_level",
+        description: "Log level: error | warn | info | debug | trace.",
+        example: "\"warn\"",
+    },
 ];
+
+fn is_known_key(key: &str) -> bool {
+    FIELDS.iter().any(|f| f.key == key)
+}
+
+fn known_keys_joined() -> String {
+    FIELDS.iter().map(|f| f.key).collect::<Vec<_>>().join(", ")
+}
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
-    /// Interactive wizard. Refuses to run when stdin is not a TTY.
+    /// Interactive wizard. Refuses to run when stdin is not a TTY,
+    /// unless `--template` is passed.
     Init {
-        /// Skip the "this will overwrite an existing file" confirmation.
+        /// Skip the "this will overwrite an existing file" confirmation
+        /// (interactive mode) or allow overwrite (`--template` mode).
         #[arg(long)]
         force: bool,
+        /// Skip prompts and write a commented-out template that lists
+        /// every recognised field. Safe in non-TTY contexts.
+        #[arg(long)]
+        template: bool,
     },
     /// Print the effective resolved configuration, with each value
     /// annotated by its source (flag / env / config file / default).
@@ -62,6 +118,8 @@ pub enum Action {
     /// Set or unset a single field in the config file. Preserves
     /// comments and formatting via `toml_edit`. Refuses to set
     /// `api_key` from argv (would land in shell history / `ps`).
+    /// Creates the file (with just the edited value) if it doesn't
+    /// exist yet, emitting a stderr warning when it does so.
     Edit {
         /// Field name. Use `ferro-protect config show` to see the
         /// recognized fields.
@@ -71,6 +129,14 @@ pub enum Action {
         /// Remove the field from the file.
         #[arg(long, conflicts_with = "value")]
         unset: bool,
+    },
+    /// Delete the resolved config file. Prompts for confirmation unless
+    /// `--yes` is passed. Refuses to run in a non-TTY context without
+    /// `--yes` (no way to confirm).
+    Delete {
+        /// Skip the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 
@@ -135,7 +201,7 @@ pub enum ConfigCmdError {
 fn unknown_key(key: &str) -> ConfigCmdError {
     ConfigCmdError::UnknownKey {
         key: key.to_owned(),
-        valid: KNOWN_KEYS.join(", "),
+        valid: known_keys_joined(),
     }
 }
 
@@ -152,7 +218,8 @@ pub fn run(action: Action, config_flag: Option<&Path>, json: bool) -> Result<(),
         Action::Edit { key, value, unset } => {
             edit(config_flag, &env, &key, value.as_deref(), unset)
         }
-        Action::Init { force } => init(config_flag, &env, force),
+        Action::Init { force, template } => init(config_flag, &env, force, template),
+        Action::Delete { yes } => delete(config_flag, &env, yes),
     }
 }
 
@@ -172,7 +239,7 @@ where
     // Validate the user-supplied key (input error) before touching the
     // file (state error) -- input errors shouldn't depend on file state.
     if let Some(k) = key
-        && !KNOWN_KEYS.contains(&k)
+        && !is_known_key(k)
     {
         return Err(unknown_key(k));
     }
@@ -287,7 +354,7 @@ fn show_one(
     key: &str,
     json: bool,
 ) -> Result<(), ConfigCmdError> {
-    if !KNOWN_KEYS.contains(&key) {
+    if !is_known_key(key) {
         return Err(unknown_key(key));
     }
     let Some(row) = collect_rows(resolved, api_key)
@@ -315,18 +382,18 @@ fn show_one(
 
 /// `&'static str` lookup for error reporting. `key` is user-supplied so
 /// we can't borrow it past this function; instead we map it to a known
-/// static. Callers must ensure `key` is in [`KNOWN_KEYS`].
+/// static. Callers must ensure `key` is in [`FIELDS`].
 fn static_field_name(key: &str) -> &'static str {
-    KNOWN_KEYS
+    FIELDS
         .iter()
-        .copied()
+        .map(|f| f.key)
         .find(|k| *k == key)
         .unwrap_or("?")
 }
 
 fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec<ShowRow> {
     let cfg_path = resolved.config_file_path.as_deref();
-    let mut rows = Vec::with_capacity(KNOWN_KEYS.len());
+    let mut rows = Vec::with_capacity(FIELDS.len());
     rows.push(ShowRow {
         field: "host",
         value: render_opt(resolved.host.as_ref(), String::clone),
@@ -385,6 +452,42 @@ fn source_label(source: Option<&FieldSource>, file_path: Option<&Path>) -> Strin
 }
 
 // --------------------------------------------------------------------
+// config delete
+// --------------------------------------------------------------------
+
+fn delete<E>(config_flag: Option<&Path>, env: &E, yes: bool) -> Result<(), ConfigCmdError>
+where
+    E: Fn(&str) -> Option<String> + ?Sized,
+{
+    let (target_path, _src) = config::resolve_path(config_flag, env)?;
+    if !target_path.exists() {
+        return Err(ConfigCmdError::NoConfigFile { path: target_path });
+    }
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            return Err(ConfigCmdError::Other(anyhow!(
+                "refusing to delete {} without a TTY for confirmation. Pass `--yes` to skip the prompt.",
+                target_path.display(),
+            )));
+        }
+        let confirmed = dialoguer::Confirm::new()
+            .with_prompt(format!("Delete {}?", target_path.display()))
+            .default(false)
+            .interact()
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
+        if !confirmed {
+            return Err(ConfigCmdError::Cancelled);
+        }
+    }
+    fs::remove_file(&target_path).map_err(|source| ConfigCmdError::Io {
+        path: target_path.clone(),
+        source,
+    })?;
+    eprintln!("Deleted {}", target_path.display());
+    Ok(())
+}
+
+// --------------------------------------------------------------------
 // config path
 // --------------------------------------------------------------------
 
@@ -431,7 +534,7 @@ fn edit<E>(
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
-    if !KNOWN_KEYS.contains(&key) {
+    if !is_known_key(key) {
         return Err(unknown_key(key));
     }
     if !unset && value.is_none() {
@@ -442,6 +545,7 @@ where
     }
 
     let (target_path, _source) = config::resolve_path(config_flag, env)?;
+    let creating = !target_path.exists();
     let mut doc = read_or_init_doc(&target_path)?;
 
     if unset {
@@ -453,6 +557,14 @@ where
 
     validate_doc(&doc, key)?;
     write_doc(&target_path, &doc)?;
+    if creating {
+        eprintln!(
+            "note: created new config file {} (just `{key}` set so far).\n      \
+             Run `ferro-protect config init` for the guided wizard, or\n      \
+             `ferro-protect config init --template` for a commented-out scaffold.",
+            target_path.display(),
+        );
+    }
     Ok(())
 }
 
@@ -502,7 +614,7 @@ fn apply_edit(doc: &mut DocumentMut, key: &str, raw: &str) -> Result<(), ConfigC
         }
         // `api_key` is rejected above before we get here.
         "api_key" => unreachable!("api_key rejected before apply_edit"),
-        _ => unreachable!("unknown key filtered by KNOWN_KEYS gate"),
+        _ => unreachable!("unknown key filtered by FIELDS gate"),
     }
     Ok(())
 }
@@ -601,14 +713,83 @@ fn parse_log_level(s: &str) -> Option<LogLevel> {
 // config init
 // --------------------------------------------------------------------
 
+/// `ferro-protect config init --template` writes this. Built from the
+/// canonical [`FIELDS`] table so adding/renaming a field can't desync
+/// the scaffold from the validators.
+fn build_template() -> String {
+    let mut out = String::from(
+        "# ferro-protect config file\n\
+         # Generated by `ferro-protect config init --template`.\n\
+         # Precedence: flag > env > this file > built-in default.\n\
+         # See `ferro-protect config --help` for the full list of fields.\n",
+    );
+    for f in FIELDS {
+        out.push('\n');
+        for line in f.description.lines() {
+            out.push_str("# ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str("# ");
+        out.push_str(f.key);
+        out.push_str(" = ");
+        out.push_str(f.example);
+        out.push('\n');
+    }
+    out
+}
+
+fn init_template<E>(config_flag: Option<&Path>, env: &E, force: bool) -> Result<(), ConfigCmdError>
+where
+    E: Fn(&str) -> Option<String> + ?Sized,
+{
+    let (target_path, _src) = config::resolve_path(config_flag, env)?;
+    if target_path.exists() && !force {
+        return Err(ConfigCmdError::Other(anyhow!(
+            "{} already exists. Pass `--force` to overwrite, or `config edit KEY VALUE` / `config delete` to manage it.",
+            target_path.display(),
+        )));
+    }
+    if let Some(parent) = target_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|source| ConfigCmdError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&target_path, build_template()).map_err(|source| ConfigCmdError::Io {
+        path: target_path.clone(),
+        source,
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o600));
+    }
+    eprintln!(
+        "Wrote template config {}. Uncomment the values you need.",
+        target_path.display(),
+    );
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "wizard is a linear prompt sequence; decomposing further obscures the read order"
 )]
-fn init<E>(config_flag: Option<&Path>, env: &E, force: bool) -> Result<(), ConfigCmdError>
+fn init<E>(
+    config_flag: Option<&Path>,
+    env: &E,
+    force: bool,
+    template: bool,
+) -> Result<(), ConfigCmdError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
+    if template {
+        return init_template(config_flag, env, force);
+    }
     if !std::io::stdin().is_terminal() {
         return Err(ConfigCmdError::NotATty);
     }
