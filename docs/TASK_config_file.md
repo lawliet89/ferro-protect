@@ -1,5 +1,28 @@
 # Chore: TOML config file and interactive `config` subcommand
 
+> [!IMPORTANT]
+> **The implementation that shipped is narrower than this plan.** During
+> review of PR #10 the interactive wizard, `config edit`, `config
+> delete`, and `config list` were all removed before merge — users
+> hand-edit `config.toml` with `$EDITOR` instead. See commit `a88c707`
+> (and follow-up doc fixes in `33c3f13`) for the rationale and what
+> actually landed:
+>
+> - **Subcommands**: `template`, `show`, `path` (no `init` wizard,
+>   no `edit`, no `delete`, no `list`).
+> - **Deps**: `toml` + `etcetera` (not `toml_edit`/`dialoguer`/
+>   `rpassword`/`is-terminal`).
+> - **`config path --json`** emits `{"path": "..."}` only (no
+>   `exists` field — `path` hard-errors when the file is missing,
+>   so `exists` would always be `true`).
+> - **`config show`** errors when the file is missing rather than
+>   rendering defaults.
+>
+> The text below is preserved as a historical record of the original
+> design intent. Cross-reference it against the README and the actual
+> `commands::config::Action` enum before treating any section as
+> current behaviour.
+
 > Read [AGENT.md](../AGENT.md) before starting. It carries the
 > cross-cutting rules (commit policy, signing, gates, logging) every
 > chore must follow. This document carries only the *what-to-do*.
