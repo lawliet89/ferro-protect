@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! End-to-end test: spawn the `ferro-protect info` binary against a
 //! `wiremock` server and assert the output.

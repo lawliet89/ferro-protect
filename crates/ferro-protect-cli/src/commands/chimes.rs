@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use ferro_protect::models::{Chime, ChimeId};
 use ferro_protect::ProtectClient;
+use ferro_protect::models::{Chime, ChimeId};
 
 use crate::output;
 

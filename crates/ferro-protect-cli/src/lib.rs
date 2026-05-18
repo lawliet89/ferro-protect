@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown)]
 
 //! Library half of the `ferro-protect` CLI. Exists so the API-key
 //! resolver and other CLI internals can be unit-tested by integration

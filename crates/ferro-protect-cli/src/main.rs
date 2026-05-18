@@ -1,11 +1,10 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown)]
 
 //! `ferro-protect` -- command-line tool for the UniFi Protect local
 //! integration API. Doubles as a living integration test for the
 //! `ferro-protect` library.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 use ferro_protect::{ProtectClient, TlsMode};
 use ferro_protect_cli::{api_key, commands, logging};

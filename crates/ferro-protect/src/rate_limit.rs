@@ -17,8 +17,8 @@
 //! without risking deadlock against in-flight requests). In practice
 //! Protect never tightens its policy mid-session.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -56,7 +56,10 @@ impl Default for RateLimitConfig {
 }
 
 #[derive(Clone)]
-#[allow(clippy::redundant_pub_crate)]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "pub(crate) needed for cross-module access within the crate"
+)]
 pub(crate) struct AdaptiveLimiter {
     inner: Arc<Inner>,
 }
@@ -160,7 +163,10 @@ impl AdaptiveLimiter {
 /// After each attempt the response headers are fed to
 /// [`AdaptiveLimiter::observe`] so the limiter can grow its capacity if
 /// the server advertises a larger quota.
-#[allow(clippy::redundant_pub_crate)]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "pub(crate) needed for cross-module access within the crate"
+)]
 pub(crate) struct RateLimitMiddleware {
     pub(crate) limiter: AdaptiveLimiter,
 }

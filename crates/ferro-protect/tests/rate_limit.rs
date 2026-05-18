@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    reason = "test files prioritise clarity over pedantic style"
+)]
 
 //! End-to-end behaviour of the retry middleware + adaptive rate limiter
 //! against a `wiremock` server. Exercises three properties of the
@@ -10,8 +14,8 @@
 //! 3. The proactive throttle stops a burst of requests from exceeding
 //!    the advertised quota even without server-side 429s.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ferro_protect::{Error, ProtectClient, RateLimitConfig, RetryConfig};

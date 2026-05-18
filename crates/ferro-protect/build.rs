@@ -3,7 +3,6 @@
 //! Bumping the spec version is a one-line change here -- update `SPEC_VERSION`
 //! (or run `scripts/update-spec` from the repo root, which edits this file
 //! mechanically and re-runs the full check suite).
-#![allow(clippy::doc_markdown)]
 
 use std::path::PathBuf;
 

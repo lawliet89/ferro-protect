@@ -7,11 +7,11 @@ use log::{debug, info};
 use reqwest::header::HeaderMap;
 use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use secrecy::SecretString;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use url::Url;
 
-use crate::auth::{ApiKey, API_KEY_HEADER};
+use crate::auth::{API_KEY_HEADER, ApiKey};
 use crate::error::{Error, Result};
 use crate::models::ApplicationInfo;
 use crate::rate_limit::{AdaptiveLimiter, RateLimitConfig, RateLimitMiddleware};
@@ -127,7 +127,7 @@ impl ProtectClient {
     // payloads). Keeping them here means each future endpoint is a
     // one-line wrapper rather than a one-helper-plus-one-line churn.
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -143,7 +143,7 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn patch_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -164,7 +164,7 @@ impl ProtectClient {
     /// and DELETE-style endpoints. Defined here so endpoint methods stay
     /// one-liners without each one calling `json_response` and then
     /// discarding `()`-shaped deserialisation errors on empty bodies.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn send_no_content(&self, method: reqwest::Method, path: &str) -> Result<()> {
         debug!("{method} {path}");
         let response = self
@@ -178,7 +178,7 @@ impl ProtectClient {
         Err(Error::from_response(response).await)
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
         let response = self.http_read.get(self.url(path)?).send().await?;
@@ -362,10 +362,12 @@ impl ProtectClientBuilder {
         // This ensures retries are counted against the server budget
         // rather than bypassing the limiter's per-window quota.
         let http_read = {
-            let mut builder = MiddlewareClientBuilder::new(reqwest_client.clone())
-                .with(retry_middleware.clone());
+            let mut builder =
+                MiddlewareClientBuilder::new(reqwest_client.clone()).with(retry_middleware.clone());
             if let Some(ref limiter) = opt_limiter {
-                builder = builder.with(RateLimitMiddleware { limiter: limiter.clone() });
+                builder = builder.with(RateLimitMiddleware {
+                    limiter: limiter.clone(),
+                });
             }
             builder.build()
         };

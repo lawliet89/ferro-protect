@@ -38,7 +38,10 @@ use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next, Result};
 
 #[derive(Debug, Clone)]
-#[allow(clippy::redundant_pub_crate)]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "pub(crate) needed for cross-module access within the crate"
+)]
 pub(crate) struct RetryAfterAwareMiddleware {
     pub(crate) max_retries: u32,
     pub(crate) initial_backoff: Duration,

@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::doc_markdown)]
 
 //! Async Rust client for the UniFi Protect local integration API (v7.1.60).
 //!
