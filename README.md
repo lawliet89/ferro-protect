@@ -151,6 +151,13 @@ ferro-protect config edit host nvr.local   # set a single field; preserves comme
 ferro-protect config edit host --unset     # remove a field
 ```
 
+`config show` and `config path` error when the resolved config file
+doesn't exist — they're file-inspection commands, so silently rendering
+defaults would be misleading. Run `config init` (or `config edit KEY
+VALUE`, which creates the file on first use) to bootstrap one. Other
+subcommands (`info`, `cameras list`, …) still treat a missing XDG
+default as "no config" and fall back to env vars + flags as usual.
+
 `config edit` refuses to set `api_key` from the command line — the raw
 key would land in shell history, `ps`, and the parent process's argv.
 Use `config init` (hidden paste), `api_key_file` (point at a key
