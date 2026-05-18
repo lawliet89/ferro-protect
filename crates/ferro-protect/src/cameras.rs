@@ -6,8 +6,10 @@ use serde::Serialize;
 
 use crate::client::ProtectClient;
 use crate::error::Result;
-use crate::generated::CreatedRtspsStreams;
-use crate::models::{Camera, CameraId, ChannelQuality, RtspsStream, SnapshotOptions};
+use crate::generated::{CreatedRtspsStreams, TalkbackSession as GeneratedTalkbackSession};
+use crate::models::{
+    Camera, CameraId, ChannelQuality, RtspsStream, SnapshotOptions, TalkbackSession,
+};
 
 /// Camera-scoped API entry point. Cheap to construct; holds a borrow
 /// of the [`ProtectClient`] that issued it.
@@ -124,6 +126,34 @@ impl<'a> CamerasApi<'a> {
             if qualities.len() == 1 { "y" } else { "ies" }
         );
         Ok(streams)
+    }
+
+    /// `POST /v1/cameras/{id}/talkback-session`. Allocate a
+    /// talkback WebSocket URL and return the audio config the
+    /// caller will need to encode the stream.
+    ///
+    /// HTTP verb is POST per the spec (no request body; server
+    /// allocates session credentials), but no persistent NVR state
+    /// is mutated. Same phase-5 read-shaped framing as
+    /// [`Self::rtsps_stream`].
+    ///
+    /// # Errors
+    /// [`Error`] -- typically `Http`, `Api { status: 404, .. }` for
+    /// an unknown camera.
+    pub async fn talkback_session(&self, id: &CameraId) -> Result<TalkbackSession> {
+        let path = format!("/v1/cameras/{id}/talkback-session");
+        let raw: GeneratedTalkbackSession = self.client.post_empty_json(&path).await?;
+        let session = TalkbackSession {
+            bits_per_sample: *raw.bits_per_sample,
+            codec: raw.codec.0,
+            sampling_rate: *raw.sampling_rate,
+            url: raw.url.0,
+        };
+        info!(
+            "created talkback session for camera {id} (codec={}, sample_rate={}, bits_per_sample={})",
+            session.codec, session.sampling_rate, session.bits_per_sample
+        );
+        Ok(session)
     }
 }
 

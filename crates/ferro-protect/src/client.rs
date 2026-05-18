@@ -144,6 +144,17 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
+    /// POST with no request body, parsing the JSON response.
+    /// Distinct from [`Self::post_json`] because that helper sets a
+    /// `Content-Type: application/json` body even for `()`, which
+    /// the talkback-session endpoint (and likely future no-body
+    /// POSTs) rejects.
+    pub(crate) async fn post_empty_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        debug!("POST {path} (no body)");
+        let response = self.http_write.post(self.url(path)?).send().await?;
+        Self::json_response(response).await
+    }
+
     #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn patch_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,

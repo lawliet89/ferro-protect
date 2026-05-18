@@ -248,3 +248,32 @@ async fn cameras_rtsps_multiple_qualities_preserve_request_order() {
         "expected low row before high (request order); stdout:\n{stdout}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_talkback_renders_session_details() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/talkback-session"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"bitsPerSample":16,"codec":"aac","samplingRate":16000,"url":"wss://nvr/talkback/abc"}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    let assert =
+        tokio::task::spawn_blocking(move || run_cmd(&base_url, &["cameras", "talkback", "abc"]))
+            .await
+            .expect("spawn_blocking");
+
+    assert
+        .success()
+        .stdout(predicate::str::contains("wss://nvr/talkback/abc"))
+        .stdout(predicate::str::contains("aac"))
+        .stdout(predicate::str::contains("16000"));
+}

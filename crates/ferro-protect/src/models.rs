@@ -11,6 +11,8 @@
 //!
 //! **Do not** name `crate::generated::...` types in any public signature.
 
+use std::num::NonZeroU64;
+
 use serde::{Deserialize, Serialize};
 
 pub use crate::generated::{
@@ -33,6 +35,28 @@ pub struct SnapshotOptions {
     /// Force 1080P or higher resolution snapshot. Spec query param
     /// `highQuality=true`.
     pub high_quality: bool,
+}
+
+/// Talkback session metadata returned by
+/// [`crate::CamerasApi::talkback_session`].
+///
+/// The fields mirror the spec's `talkbackSession` schema. Each one
+/// is hand-written here against a primitive type rather than
+/// re-exporting the typify-generated single-field wrappers
+/// (`TalkbackStreamCodec(pub String)` etc.) — the wrappers add a
+/// `.0` access pattern with no semantic value, so the public API
+/// stays flatter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TalkbackSession {
+    /// Audio bits per sample (typically 16).
+    pub bits_per_sample: NonZeroU64,
+    /// Audio codec identifier (e.g. `"aac"`).
+    pub codec: String,
+    /// Audio sampling rate in Hz (typically 16000 or 22050).
+    pub sampling_rate: NonZeroU64,
+    /// WebSocket URL the client opens to push talkback audio into.
+    pub url: String,
 }
 
 /// One RTSPS stream URL paired with the quality level it was created

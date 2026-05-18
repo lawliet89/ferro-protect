@@ -9,6 +9,7 @@ use clap::{Subcommand, ValueEnum};
 use ferro_protect::ProtectClient;
 use ferro_protect::models::{
     Camera, CameraId, ChannelQuality, RtspsStream, SnapshotChannel, SnapshotOptions,
+    TalkbackSession,
 };
 use is_terminal::IsTerminal;
 
@@ -20,6 +21,13 @@ pub enum Action {
     List,
     /// Look up one camera by ID.
     Get {
+        /// Camera ID.
+        id: String,
+    },
+    /// Allocate a talkback WebSocket session for a camera. The
+    /// server returns the WS URL to push audio into plus the audio
+    /// codec/sample-rate config the camera expects.
+    Talkback {
         /// Camera ID.
         id: String,
     },
@@ -115,6 +123,15 @@ pub async fn run(client: &ProtectClient, action: Action, json: bool) -> Result<(
                 .with_context(|| format!("fetching camera {id}"))?;
             output::emit_stdout(&camera, json, || render_one(&camera))?;
         }
+        Action::Talkback { id } => {
+            let id = CameraId::from(id);
+            let session = client
+                .cameras()
+                .talkback_session(&id)
+                .await
+                .with_context(|| format!("creating talkback session for camera {id}"))?;
+            output::emit_stdout(&session, json, || render_talkback_session(&session))?;
+        }
         Action::Rtsps { id, quality } => {
             let id = CameraId::from(id);
             let qualities: Vec<ChannelQuality> =
@@ -189,6 +206,13 @@ fn render_table(cameras: &[Camera]) -> String {
         })
         .collect();
     output::table(headers, &rows)
+}
+
+fn render_talkback_session(s: &TalkbackSession) -> String {
+    format!(
+        "URL:           {}\nCodec:         {}\nSample rate:   {} Hz\nBits/sample:   {}\n",
+        s.url, s.codec, s.sampling_rate, s.bits_per_sample,
+    )
 }
 
 fn render_rtsps_streams(streams: &[RtspsStream]) -> String {

@@ -409,3 +409,35 @@ async fn live_read_cameras_rtsps_stream() {
         );
     }
 }
+
+#[tokio::test]
+async fn live_read_cameras_talkback_session() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_cameras_talkback_session: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let cameras = client
+        .cameras()
+        .list()
+        .await
+        .expect("cameras list call succeeded");
+    let Some(first) = cameras.first() else {
+        println!("(skipping live_read_cameras_talkback_session: NVR has no cameras)");
+        return;
+    };
+    let session = client
+        .cameras()
+        .talkback_session(&first.id)
+        .await
+        .expect("talkback_session call succeeded");
+    assert!(
+        session.url.starts_with("ws://") || session.url.starts_with("wss://"),
+        "expected WebSocket URL scheme, got {}",
+        session.url
+    );
+    assert!(!session.codec.is_empty(), "empty codec id");
+    println!(
+        "live_read_cameras_talkback_session: camera {} codec={} sample_rate={} bits={}",
+        first.id, session.codec, session.sampling_rate, session.bits_per_sample
+    );
+}
