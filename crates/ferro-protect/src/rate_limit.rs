@@ -36,11 +36,12 @@ type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMidd
 /// Defaults match Protect 7.1.60's advertised policy (`10-in-1sec`).
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
-    /// Requests allowed in any rolling `per` window. Also acts as the
-    /// burst size: the bucket starts full, so up to `rate` requests fire
+    /// Target steady-state rate (`rate` requests every `per`) and max burst
+    /// size. The bucket starts full, so up to `rate` requests can fire
     /// immediately before refill pacing kicks in.
     pub rate: NonZeroU32,
-    /// Window over which `rate` requests are allowed.
+    /// Refill interval associated with [`Self::rate`] (used as `per / rate`
+    /// between token refills), not a strict rolling-window cap.
     pub per: Duration,
 }
 
