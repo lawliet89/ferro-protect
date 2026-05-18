@@ -20,9 +20,10 @@ use ferro_protect_cli::{api_key, commands, logging};
 /// form on each) or in the TOML config file at
 /// `$XDG_CONFIG_HOME/ferro-protect/config.toml`. Precedence is
 /// **flag > env > config file > built-in default**. Run
-/// `ferro-protect config init` to generate the file interactively, or
-/// `ferro-protect config show` to inspect the effective configuration
-/// and the source of each value.
+/// `ferro-protect config template` to write a commented-out scaffold
+/// to that path (or `--stdout` to print it), then hand-edit the
+/// values. `ferro-protect config show` inspects the effective
+/// configuration with per-field source attribution.
 #[derive(Debug, Parser)]
 #[command(name = "ferro-protect", version, about, long_about = None)]
 struct Cli {
@@ -163,9 +164,10 @@ enum Command {
         #[command(subcommand)]
         action: commands::viewers::Action,
     },
-    /// Manage the persistent TOML config file. See the subcommand's
-    /// own `--help` for the six actions
-    /// (init/show/edit/path/delete/list).
+    /// Inspect or scaffold the persistent TOML config file. See the
+    /// subcommand's own `--help` for the three actions
+    /// (template/show/path). Hand-edit the file with `$EDITOR` to
+    /// change values — there is no in-CLI editor by design.
     Config {
         #[command(subcommand)]
         action: commands::config::Action,
