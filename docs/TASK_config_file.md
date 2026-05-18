@@ -154,10 +154,10 @@ Interactive wizard.
   `termios` toggle for the hidden-input case — more code, less
   surface area, no extra deps.
 
-### `ferro-protect config show`
+### `ferro-protect config show [KEY]`
 
-Print the **effective** resolved config after merging file + env +
-flags, with each value annotated by its source:
+Without `KEY`: print the **effective** resolved config after merging
+file + env + flags, with each value annotated by its source:
 
 ```
 host = "nvr.local"        # from env: UNIFI_PROTECT_HOST
@@ -166,9 +166,74 @@ log_level = "warn"        # from config file: /home/u/.config/ferro-protect/conf
 api_key = <set>           # from env: UNIFI_PROTECT_API_KEY_FILE
 ```
 
-The raw API key value is **never** printed; show `<set>` / `<unset>`
-only. Respects the global `--json` flag (the JSON form drops the
-human comment and emits a `{ value, source }` shape per field).
+With `KEY` (single positional arg): print only that field's value.
+Plain output is the bare value with no annotation, so it's scriptable:
+
+```sh
+$ ferro-protect config show host
+nvr.local
+
+$ HOST=$(ferro-protect config show host)
+```
+
+If `KEY` is not a recognized field, exit non-zero with a list of valid
+keys. If `KEY` is recognized but unset across all sources, exit
+non-zero with a clear "no value" message — distinguishable from a
+spelling error.
+
+Respects the global `--json` flag:
+
+- Without `KEY` (`--json`): one object per field keyed by name, each
+  value a `{ value, source }` shape. `api_key` value is the literal
+  string `"<set>"` or `"<unset>"`, never the secret.
+- With `KEY` (`--json`): just the single `{ value, source }` object.
+
+The raw API key value is **never** printed regardless of mode; the
+`api_key` field shows `<set>` / `<unset>` only. (Source attribution
+still tells you *where* the key would be loaded from, just not what
+it is.)
+
+### `ferro-protect config edit KEY VALUE`
+
+Set `KEY` to `VALUE` in the **config file** (not the merged view) and
+write it back, preserving comments and formatting. Non-interactive,
+scriptable counterpart to `config init`.
+
+- The file targeted is the one file-discovery resolves to: `--config`
+  if set, else `UNIFI_PROTECT_CONFIG_FILE` if set, else the XDG
+  default. If no file exists at any of those paths, create one at the
+  resolved path (XDG default unless an authoritative source is set),
+  with a header comment block and `chmod 0600` for the new file.
+- `VALUE` is parsed according to the target field's type:
+  - Strings (`host`, `base_url`, `api_key_file`): taken verbatim.
+    Tilde in `api_key_file` is *not* expanded at write time — store
+    the literal `~/path` so the file remains portable across `HOME`
+    changes; expansion happens at load time.
+  - Bools (`insecure`, `json`): accept `true`/`false`/`1`/`0`/`yes`/`no`
+    (same set as `clap::builder::BoolishValueParser`).
+  - Enums (`log_level`): validated against the same set as the
+    `--log-level` flag; an invalid value exits non-zero listing the
+    accepted variants.
+- `config edit KEY --unset` removes `KEY` from the file. If `KEY` is
+  already absent, that's a no-op exit-zero.
+- `config edit` **refuses** to set `api_key` (raw key) from the
+  command line — the value would land in shell history, `ps`, and the
+  parent process's argv. The error tells the user to use
+  `config init`, `api_key_file`, or the env var instead. Setting
+  `api_key_file` (the path) is fine.
+- Mutually-exclusive constraints (`host`+`base_url`, `api_key`+`api_key_file`)
+  are enforced after the edit: if setting `host` would conflict with
+  an existing `base_url`, the command exits non-zero pointing at the
+  conflict and suggesting `--unset`. The file is not modified on
+  conflict.
+- The full file is re-validated through the same `ConfigFile`
+  deserializer before being written, so an edit cannot leave the file
+  in a state the loader would reject.
+
+Use `toml_edit` (not `toml`) for the round-trip so user comments and
+whitespace survive. The `toml_edit::de` feature gives us deserialize
+for free, so this **replaces** the `toml` crate entry in the deps
+table below.
 
 ### `ferro-protect config path`
 
@@ -176,7 +241,7 @@ Print the resolved config file path on a single line, whether or not
 the file exists. Useful in shell scripts: `$(ferro-protect config
 path)`. The path printed reflects file-discovery precedence:
 `--config` if set, else `UNIFI_PROTECT_CONFIG_FILE` if set, else the
-XDG default.
+XDG default. Respects `--json`: `{"path": "...", "exists": true}`.
 
 ## Code organization
 
@@ -196,7 +261,7 @@ XDG default.
   - `pub fn resolve(file: Option<&ConfigFile>, cli: &Cli, env: &E) -> ResolvedConfig` —
     pure merger; table-driven tests cover every precedence path.
 - New module `crates/ferro-protect-cli/src/commands/config.rs` for
-  the three actions (`init`, `show`, `path`).
+  the four actions (`init`, `show`, `path`, `edit`).
 - `api_key::resolve` grows the `Sources` struct described above.
 - The "warn if lax permissions" helper stays in `api_key.rs` and gets
   reused by `config::save_*` for the config file path.
@@ -206,12 +271,12 @@ XDG default.
 Each new dep needs a one-line justification in the chore's commit
 body. `cargo deny check` must stay green.
 
-| Crate       | Version | Why                                                   |
-|-------------|---------|-------------------------------------------------------|
-| `toml`      | `0.8`   | Config file parser; standard Rust ecosystem choice.   |
-| `etcetera`  | `0.8`   | XDG/AppData paths, cross-platform, minimal deps.      |
-| `rpassword` | `7`     | Hidden-input read for pasted API keys.                |
-| `dialoguer` | `0.11`  | Wizard prompts (confirm/select/input); pulls only `console`. |
+| Crate       | Version | Why                                                                              |
+|-------------|---------|----------------------------------------------------------------------------------|
+| `toml_edit` | `0.22`  | Format-preserving TOML round-trip for `config edit`. Provides `serde` deserialization too, so we do not need a separate `toml` crate. |
+| `etcetera`  | `0.11`  | XDG/AppData paths, cross-platform, minimal deps.                                 |
+| `rpassword` | `7`     | Hidden-input read for pasted API keys.                                           |
+| `dialoguer` | `0.12`  | Wizard prompts (confirm/select/input); pulls only `console`.                     |
 
 ## Tests
 
@@ -235,10 +300,34 @@ All test files live under `crates/ferro-protect-cli/tests/`.
 - **`cli_config.rs`** (`assert_cmd`):
   - `config show --config <tempfile>` with a valid config asserts the
     source-attribution output for each field.
+  - `config show <KEY>` prints the bare value for a known key; exits
+    non-zero with the valid-key list for an unknown key; exits
+    non-zero with a distinct "no value" message for a known-but-unset
+    key.
+  - `config show --json` (full) emits the per-field `{value, source}`
+    map; `config show --json <KEY>` emits a single `{value, source}`
+    object.
+  - `config show` and `config show api_key` never reveal the actual
+    API key — output contains `<set>` / `<unset>` only.
   - `config show` with `HOME=<tmpdir>` and unset `XDG_CONFIG_HOME`
     finds the XDG-fallback path.
   - `config path` reflects file-discovery precedence across the three
-    sources.
+    sources. `config path --json` emits `{path, exists}`.
+  - `config edit host nvr.local` writes the value and a subsequent
+    `config show host` reflects it. A pre-existing comment block in
+    the file survives the round-trip.
+  - `config edit log_level bogus` exits non-zero without modifying
+    the file; comments and other values are untouched on disk
+    afterward.
+  - `config edit api_key <anything>` is refused with a clear pointer
+    to `config init` / `api_key_file` / the env var. `config edit
+    api_key_file ~/keys/foo` is accepted.
+  - `config edit host nvr.local` against a file that already has
+    `base_url` exits non-zero and leaves the file unchanged.
+  - `config edit host --unset` removes the field; `config edit host
+    --unset` on a file that doesn't have `host` is a no-op exit-zero.
+  - `config edit` creates the XDG file on first use (with header
+    comment block; mode 0600 on Unix) when no file exists.
   - `config init` is excluded from automated CI (needs a TTY). Mark
     `#[ignore]` with a comment pointing at the manual-test entry in
     the chore's PROGRESS.md write-up.
@@ -273,7 +362,9 @@ All test files live under `crates/ferro-protect-cli/tests/`.
    `long_about` explicitly names `UNIFI_PROTECT_CONFIG_FILE` and
    notes that both are authoritative (missing file errors out) while
    the XDG default is opportunistic. The new `config` subcommand has
-   its own `long_about` walking through `init` / `show` / `path`.
+   its own `long_about` walking through `init` / `show` / `edit` /
+   `path`, including the `config show <KEY>` scriptable form and the
+   refusal of `config edit api_key <RAW>`.
 4. **`PROGRESS.md`** — entry per AGENT.md's progress-logging rules.
 
 ## Out of scope (deferred)
