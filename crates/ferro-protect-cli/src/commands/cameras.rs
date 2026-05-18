@@ -149,6 +149,17 @@ pub async fn run(client: &ProtectClient, action: Action, json: bool) -> Result<(
             high_quality,
             out,
         } => {
+            // The global `--json` flag is a string-output mode; a JPEG has
+            // no meaningful JSON representation (base64-wrapping it would
+            // surprise scripted callers more than it'd help). Reject up
+            // front so the contract stays clear: `--json` always implies
+            // machine-readable text on stdout.
+            if json {
+                bail!(
+                    "`cameras snapshot` produces binary JPEG output, which has no JSON \
+                     representation. Drop --json, or pipe the raw bytes (or use --out PATH)."
+                );
+            }
             let id = CameraId::from(id);
             let opts = SnapshotOptions {
                 channel: channel.map(SnapshotChannel::from),

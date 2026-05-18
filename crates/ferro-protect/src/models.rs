@@ -16,8 +16,8 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 pub use crate::generated::{
-    Camera, CameraId, ChannelQuality, Chime, ChimeId, Light, LightId, Liveview, LiveviewId, Nvr,
-    NvrId, ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer, ViewerId,
+    Camera, CameraId, ChannelQuality, Chime, ChimeId, DeviceState, Light, LightId, Liveview,
+    LiveviewId, Nvr, NvrId, ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer, ViewerId,
 };
 
 /// Optional query parameters for [`crate::CamerasApi::snapshot_with`].
@@ -40,12 +40,11 @@ pub struct SnapshotOptions {
 /// Talkback session metadata returned by
 /// [`crate::CamerasApi::talkback_session`].
 ///
-/// The fields mirror the spec's `talkbackSession` schema. Each one
-/// is hand-written here against a primitive type rather than
-/// re-exporting the typify-generated single-field wrappers
-/// (`TalkbackStreamCodec(pub String)` etc.) — the wrappers add a
-/// `.0` access pattern with no semantic value, so the public API
-/// stays flatter.
+/// The fields mirror the spec's `talkbackSession` schema. They use
+/// flat std types (`String`, `NonZeroU64`) rather than the
+/// typify-generated single-field wrappers (`TalkbackStreamCodec(pub
+/// String)` etc.) — the wrappers add a `.0` access pattern with no
+/// semantic value, so the public API stays flatter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TalkbackSession {

@@ -339,8 +339,11 @@ async fn live_read_cameras_snapshot() {
         .list()
         .await
         .expect("cameras list call succeeded");
-    let Some(first) = cameras.first() else {
-        println!("(skipping live_read_cameras_snapshot: NVR has no cameras)");
+    let Some(first) = cameras
+        .iter()
+        .find(|c| c.state == ferro_protect::models::DeviceState::Connected)
+    else {
+        println!("(skipping live_read_cameras_snapshot: no online camera on NVR)");
         return;
     };
     let bytes = client
@@ -380,8 +383,11 @@ async fn live_read_cameras_rtsps_stream() {
         .list()
         .await
         .expect("cameras list call succeeded");
-    let Some(first) = cameras.first() else {
-        println!("(skipping live_read_cameras_rtsps_stream: NVR has no cameras)");
+    let Some(first) = cameras
+        .iter()
+        .find(|c| c.state == ferro_protect::models::DeviceState::Connected)
+    else {
+        println!("(skipping live_read_cameras_rtsps_stream: no online camera on NVR)");
         return;
     };
     let streams = client
@@ -421,8 +427,15 @@ async fn live_read_cameras_talkback_session() {
         .list()
         .await
         .expect("cameras list call succeeded");
-    let Some(first) = cameras.first() else {
-        println!("(skipping live_read_cameras_talkback_session: NVR has no cameras)");
+    // Talkback also requires the camera to have a speaker; many UBV
+    // outdoor models don't. Filter for both online + has_speaker so a
+    // mixed-NVR fleet skips cleanly rather than failing the suite.
+    let Some(first) = cameras.iter().find(|c| {
+        c.state == ferro_protect::models::DeviceState::Connected && c.feature_flags.has_speaker
+    }) else {
+        println!(
+            "(skipping live_read_cameras_talkback_session: no online camera with talkback support)"
+        );
         return;
     };
     let session = client

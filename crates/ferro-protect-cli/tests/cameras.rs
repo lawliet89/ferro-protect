@@ -9,7 +9,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use wiremock::matchers::{body_json, method, path, query_param};
+use wiremock::matchers::{body_bytes, body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FIXTURE_EMPTY_LIST: &str = "[]";
@@ -137,6 +137,25 @@ async fn cameras_snapshot_writes_to_out_path() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cameras_snapshot_rejects_json_flag() {
+    // `cameras snapshot` returns binary; the global `--json` flag is
+    // string output. The CLI must reject the combination up front
+    // (before any network call) so scripted callers see a clear error
+    // rather than raw JPEG bytes.
+    let base_url = "http://127.0.0.1:1"; // unreachable -- the test must fail before any network call
+    let assert = tokio::task::spawn_blocking(move || {
+        run_cmd(base_url, &["--json", "cameras", "snapshot", "abc"])
+    })
+    .await
+    .expect("spawn_blocking");
+
+    assert
+        .failure()
+        .stderr(predicate::str::contains("JSON"))
+        .stderr(predicate::str::contains("--out"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cameras_snapshot_forwards_channel_and_high_quality_flags() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -252,8 +271,14 @@ async fn cameras_rtsps_multiple_qualities_preserve_request_order() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cameras_talkback_renders_session_details() {
     let server = MockServer::start().await;
+    // `body_bytes(b"")` is the load-bearing assertion of this test:
+    // `post_empty_json` must send no body. A regression to
+    // `post_json(&())` would emit a 4-byte `null` payload with a JSON
+    // content-type and would fail this matcher — and the real
+    // talkback endpoint, which rejects `null` request bodies.
     Mock::given(method("POST"))
         .and(path("/v1/cameras/abc/talkback-session"))
+        .and(body_bytes(b"".as_slice()))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_string(
