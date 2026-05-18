@@ -31,7 +31,17 @@ use crate::config::{
 #[derive(Debug, Subcommand)]
 pub enum Action {
     /// Print the effective resolved configuration, with each value
-    /// annotated by its source (flag / env / config file / default).
+    /// annotated by its source (env / config file / default).
+    ///
+    /// Per-invocation global flags (`--host`, `--insecure`, …) are
+    /// **not** reflected -- they would show `source = flag` for the
+    /// current invocation only, which is misleading as "the effective
+    /// config". `--config` is the only global flag honoured here (it
+    /// picks *which* file to inspect). The full
+    /// flag-wins-over-env-wins-over-file precedence is still applied
+    /// when the binary runs a real command like `info` or
+    /// `cameras list`.
+    ///
     /// Pass a single KEY to print only that field's value (scriptable).
     /// `--json` switches to a structured `{value, source}` form.
     Show {

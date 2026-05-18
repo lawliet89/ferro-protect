@@ -126,8 +126,8 @@ host = "nvr.local"
 
 # Preferred: pointer to a separate key file (tilde-expanded at load time).
 api_key_file = "~/.config/ferro-protect/api_key"
-# Discouraged alternative: raw key inline. The wizard chmods the file
-# 0600 and warns loudly; the loader treats it as a last-resort source.
+# Discouraged alternative: raw key inline. `chmod 600` the file
+# yourself; the loader treats it as a last-resort source.
 # api_key = "..."
 
 insecure = false
@@ -164,11 +164,17 @@ bootstrap. Other subcommands (`info`, `cameras list`, …) still treat
 a missing XDG default as "no config" and fall back to env vars +
 flags as usual.
 
-`config edit` refuses to set `api_key` from the command line — the raw
-key would land in shell history, `ps`, and the parent process's argv.
-Use `config init` (hidden paste), `api_key_file` (point at a key
-file), or the env var instead. `config edit api_key_file <PATH>` is
-fine.
+There is **no CLI surface for writing `api_key`** — the raw key would
+land in shell history, `ps`, and the parent process's argv. Use one of
+the safer paths:
+
+- `api_key_file = "<PATH>"` in the config file (point at a file the
+  shell will not log), or
+- `UNIFI_PROTECT_API_KEY_FILE=<PATH>` / `UNIFI_PROTECT_API_KEY=<KEY>`
+  env vars (only as visible to your shell session).
+
+If you really want an inline `api_key` in the config file,
+hand-edit it and `chmod 600` the file yourself.
 
 ### Config files and the test suite
 
@@ -186,9 +192,13 @@ with a config-file-only setup, source `.env.local` or set
 
 ### Security notes
 
-When you embed a raw `api_key` in `config.toml`, the wizard chmods the
-file `0600` on Unix. If you hand-edit, you should too. The loader
-emits a stderr warning if a referenced key file has lax permissions.
+If you hand-edit `config.toml` with a raw `api_key`, `chmod 600` the
+file yourself — there is no in-CLI editor, so nothing else will
+tighten perms for you. The loader emits a stderr warning if a
+referenced `api_key_file` has lax permissions. `config template`
+writes its scaffold with mode 0600 at creation on Unix (atomic
+temp-write + rename), so a `--force` overwrite of a file that
+previously held a raw key never widens visibility.
 
 A future option would be keyring-backed storage; not built today.
 
