@@ -270,8 +270,16 @@ where
     if let Some(p) = flag {
         return Ok((p.to_path_buf(), FileDiscoverySource::Flag));
     }
+    // Empty / whitespace-only env value falls through to the XDG
+    // default. Matches the rule we apply for `UNIFI_PROTECT_API_KEY`
+    // / `UNIFI_PROTECT_API_KEY_FILE` / `UNIFI_PROTECT_HOST` etc., and
+    // keeps `UNIFI_PROTECT_CONFIG_FILE=""` from resolving to a literal
+    // empty path that then hard-errors at `read_to_string`.
     if let Some(p) = env(ENV_CONFIG_FILE) {
-        return Ok((PathBuf::from(p), FileDiscoverySource::Env));
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return Ok((PathBuf::from(trimmed), FileDiscoverySource::Env));
+        }
     }
     Ok((xdg_default_path()?, FileDiscoverySource::XdgDefault))
 }
@@ -341,12 +349,19 @@ where
     Ok(Some(LoadedConfig { file, path, source }))
 }
 
-/// Replace a leading `~/` (or bare `~`) with `$HOME`.
+/// Replace a leading `~/` (or bare `~`) with the value of `$HOME`.
 ///
-/// Unix-shell-style expansion only; `~user` is *not* honoured. Returns
-/// the path unchanged on Windows, when `HOME` is unset, or when the
-/// path doesn't start with `~`. Public so the wizard can keep its
-/// write-side expansion in sync with the load-side one.
+/// Returns the path unchanged when:
+///
+/// - `HOME` is unset (the typical Windows case — `USERPROFILE` is *not*
+///   honoured by design; users running on Windows should write absolute
+///   paths or set `HOME` explicitly),
+/// - the path doesn't start with `~`,
+/// - or the path's `~user` form is used (intentionally not supported).
+///
+/// Public because `config::load` calls it once at parse time to
+/// normalise `api_key_file` so every downstream consumer
+/// (`api_key::resolve`, `config show`, …) sees an absolute path.
 #[must_use]
 pub fn expand_tilde(p: &Path) -> PathBuf {
     let Some(s) = p.to_str() else {
@@ -510,13 +525,19 @@ where
             source: FieldSource::Flag,
         });
     }
-    if let Some(v) = env(env_name)
-        && !v.is_empty()
-    {
-        return Some(Resolved {
-            value: v,
-            source: FieldSource::Env(env_name),
-        });
+    // Trim before the emptiness check so `UNIFI_PROTECT_HOST="   "`
+    // doesn't slip through as a valid host. Same rule the API-key env
+    // path applies. The trimmed value is what we store, so trailing
+    // newlines from `set -a; source .env.local` or similar don't make
+    // it into URLs.
+    if let Some(v) = env(env_name) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(Resolved {
+                value: trimmed.to_owned(),
+                source: FieldSource::Env(env_name),
+            });
+        }
     }
     file.map(|v| Resolved {
         value: v.to_owned(),
@@ -716,5 +737,47 @@ mod tests {
         // wins. Matches the spirit of clap's behavior, where setting
         // an env var to `""` typically means "don't override".
         assert_eq!(r.host.unwrap().source, FieldSource::ConfigFile);
+    }
+
+    #[test]
+    fn resolve_whitespace_only_env_string_falls_through_to_file() {
+        // Regression: `UNIFI_PROTECT_HOST="   "` used to slip past the
+        // `!v.is_empty()` check and override the file value. The trim
+        // rule keeps host/base_url URLs from getting accidentally
+        // populated with whitespace-only strings.
+        let lc = LoadedConfig {
+            file: ConfigFile {
+                host: Some("from-file".into()),
+                ..Default::default()
+            },
+            path: PathBuf::from("/cfg"),
+            source: FileDiscoverySource::XdgDefault,
+        };
+        let env = env_from([("UNIFI_PROTECT_HOST", "   \t\n")]);
+        let r = resolve(&Flags::default(), Some(&lc), &env);
+        assert_eq!(r.host.unwrap().source, FieldSource::ConfigFile);
+    }
+
+    #[test]
+    fn resolve_env_string_is_trimmed_before_storing() {
+        // Trailing newlines/spaces (e.g. from a hand-edited `.env.local`
+        // or shells that quote values with whitespace) should not end
+        // up in the URL we hand to the HTTP client.
+        let env = env_from([("UNIFI_PROTECT_HOST", "  nvr.local  \n")]);
+        let r = resolve(&Flags::default(), None, &env);
+        let h = r.host.unwrap();
+        assert_eq!(h.value, "nvr.local");
+        assert_eq!(h.source, FieldSource::Env("UNIFI_PROTECT_HOST"));
+    }
+
+    #[test]
+    fn resolve_path_empty_env_config_file_falls_through_to_xdg() {
+        // Regression: `UNIFI_PROTECT_CONFIG_FILE=""` (or whitespace)
+        // used to resolve to an empty PathBuf and then hard-error
+        // inside `load`. It should fall through to the XDG default
+        // just like the other empty-env paths.
+        let env = env_from([(ENV_CONFIG_FILE, "   ")]);
+        let (_path, source) = resolve_path(None, &env).expect("resolves");
+        assert!(matches!(source, FileDiscoverySource::XdgDefault));
     }
 }

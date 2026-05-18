@@ -877,6 +877,13 @@ the implementation that PR ships.
 
 ## 2026-05-18 20:11 +0800 — Chore: TOML config file + interactive `config` subcommand
 
+> [!NOTE]
+> Superseded in-PR by the 2026-05-18 22:30 entry below — the
+> interactive wizard, `edit`, `delete`, and `list` were removed during
+> review; the dependency set narrowed; `toml_edit` was swapped for
+> `toml`. This entry is preserved for the implementation arc; refer
+> to the later entry for what actually shipped.
+
 **Status**: complete
 
 **Summary**:
@@ -966,3 +973,79 @@ and a couple of deliberate scoping calls.
 
 **Next**: Plan's phase 5 (binary endpoints) is the next code work
 item. PR for this chore needs to land into `main`.
+
+## 2026-05-18 22:30 +0800 — Slim of the `config` subcommand surface
+
+**Status**: complete (within PR #10; supersedes the 20:11 entry above)
+
+**Summary**:
+Three rounds of PR review pushed back on the build-it-all-first
+approach the prior entry took. Removed `config delete`, `config edit`,
+`config list`, and the interactive `config init` wizard. The shipped
+surface is `config {show, path, template}` only: `template` writes
+(or, with `--stdout`, prints) a commented-out scaffold; users
+hand-edit the TOML with `$EDITOR`. Net **-1,076 LOC** of churn within
+this PR, plus the secret-handling surface (hidden-input paste,
+key-file writing, backup logic, per-field parsing, TTY restriction)
+all moved out of the binary.
+
+**Files changed in the slim**:
+- `Cargo.toml` / `crates/ferro-protect-cli/Cargo.toml` — dropped
+  `dialoguer`, `rpassword`, `is-terminal`, `toml_edit` workspace deps;
+  added `toml = "1.1"` (default-features off; `parse` + `serde` only).
+- `crates/ferro-protect-cli/src/config.rs` — `toml_edit::de::from_str`
+  → `toml::from_str`. `FieldType` enum removed (its only consumer was
+  `apply_edit`, now gone). `FIELDS` table simplified to four columns.
+  `expand_tilde` docstring rewritten to match actual behaviour.
+  `resolve_path` and `resolve_string` now treat empty/whitespace env
+  values as fallthrough (consistency with the API-key empty-env rule).
+- `crates/ferro-protect-cli/src/commands/config.rs` — rewritten to
+  three actions. Lost ~700 lines.
+- `crates/ferro-protect-cli/src/main.rs` — `Cli` / `Command::Config`
+  docstrings retargeted at `config template`.
+- `crates/ferro-protect-cli/tests/cli_config.rs` — slimmed from 40-odd
+  tests to ~30, dropping every `edit_*`, `delete_*`, `list_*`,
+  `init_*` test and adding `template_*` + tilde + cross-source
+  conflict + Copilot regression coverage.
+- `README.md` — "Managing the config file" block shrunk to four
+  example commands; security section rewritten to say "hand-edit +
+  `chmod 600` yourself" since nothing in the CLI writes secrets now.
+- `docs/TASK_config_file.md` — top banner pointing at this entry;
+  body preserved as historical record.
+- `AGENT.md` — new "Push back on low-utility, high-LOC features"
+  section under "Working style" so future agents flag the cost
+  trade-off *before* building, not after.
+
+**Decisions / deviations vs the 20:11 entry**:
+- **No CLI surface for writing `api_key`.** The wizard's hidden-input
+  paste was the most code-and-secret-heavy single feature in the
+  prior entry. Same security goal achieved by pointing users at
+  `api_key_file` + `chmod 600`.
+- **`toml` 1.x picked over `toml_edit`**, reversing the prior
+  decision. The prior choice was driven by `config edit`'s
+  comment preservation. With `edit` gone, the lighter purpose-built
+  parser is the right answer. (Note for future me: `toml 1.x` no
+  longer depends on `toml_edit`; that lineage ended at `toml 0.8`.
+  The prior PR description's "toml depends on toml_edit anyway"
+  claim was wrong.)
+- **`config show` source attribution kept.** Reviewed independently
+  for "is this worth the LOC?" — yes, it is the most useful
+  debugging output the loader produces. `config show host` →
+  `from env: UNIFI_PROTECT_HOST` answers "where is this value
+  coming from" in one command, which is the #1 question users will
+  have once two-axis precedence is in play.
+- **Empty/whitespace env values fall through everywhere.**
+  `UNIFI_PROTECT_HOST="   "` and `UNIFI_PROTECT_CONFIG_FILE=""` now
+  behave the same way as `UNIFI_PROTECT_API_KEY=""` and similar — they
+  are treated as "not set" and the next-priority source is consulted.
+  Inconsistent trim rules were the source of two of the round-4 review
+  comments.
+- **Atomic 0600-at-creation kept for `config template`**. Even though
+  the template is non-secret-bearing, `--force` overwriting a file
+  that previously held a raw `api_key` would otherwise have a brief
+  window at the umask's default perms. Helper opens with
+  `OpenOptions::mode(0o600)` on Unix, then `rename`s over the
+  destination.
+
+**Next**: Same as the 20:11 entry — phase 5 binary endpoints is next.
+PR #10 ready to merge.

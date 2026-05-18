@@ -81,8 +81,6 @@ pub enum ConfigCmdError {
     },
     #[error("unknown config field `{key}`\nvalid fields: {valid}")]
     UnknownKey { key: String, valid: String },
-    #[error("`{0}` is unset across all sources")]
-    NoValue(&'static str),
     #[error(
         "no config file at {}\n\
          Run `ferro-protect config template` to create one, or point\n\
@@ -253,12 +251,15 @@ fn show_one(
     if !is_known_key(key) {
         return Err(unknown_key(key));
     }
-    let Some(row) = collect_rows(resolved, api_key)
+    // `collect_rows` always emits a row for every known key (with
+    // `<unset>` when no source supplied a value), so `find` cannot
+    // miss for a key that passed `is_known_key`. The expect message
+    // is a guard against future drift between `FIELDS` and
+    // `collect_rows`.
+    let row = collect_rows(resolved, api_key)
         .into_iter()
         .find(|r| r.field == key)
-    else {
-        return Err(ConfigCmdError::NoValue(static_field_name(key)));
-    };
+        .expect("collect_rows emits a row for every FIELDS key");
     if json {
         let single = ShowSingle {
             value: row.value,
@@ -274,17 +275,6 @@ fn show_one(
         println!("{}", row.value);
     }
     Ok(())
-}
-
-/// `&'static str` lookup for error reporting. `key` is user-supplied so
-/// we can't borrow it past this function; instead we map it to a known
-/// static. Callers must ensure `key` is in [`FIELDS`].
-fn static_field_name(key: &str) -> &'static str {
-    FIELDS
-        .iter()
-        .map(|f| f.key)
-        .find(|k| *k == key)
-        .unwrap_or("?")
 }
 
 fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec<ShowRow> {
