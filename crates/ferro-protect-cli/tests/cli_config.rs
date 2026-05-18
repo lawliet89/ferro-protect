@@ -499,3 +499,192 @@ fn init_refuses_when_stdin_is_not_a_tty() {
         .failure()
         .stderr(predicate::str::contains("requires a TTY"));
 }
+
+// ----------------- config init --template -----------------
+
+#[test]
+fn init_template_writes_commented_scaffold_without_a_tty() {
+    let (home, mut cmd) = common::cmd_with_tempdir_home();
+    cmd.args(["config", "init", "--template"])
+        .assert()
+        .success();
+    let path = home
+        .path()
+        .join(".config")
+        .join("ferro-protect")
+        .join("config.toml");
+    let body = fs::read_to_string(&path).expect("file exists");
+    // Every recognised field appears, commented out.
+    for key in [
+        "host",
+        "base_url",
+        "api_key_file",
+        "api_key",
+        "insecure",
+        "json",
+        "log_level",
+    ] {
+        let needle = format!("# {key} =");
+        assert!(body.contains(&needle), "missing `{needle}` in: {body}");
+    }
+    // The template parses as an empty (all-default) config -- nothing
+    // is actually set, since every line is a comment.
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_ferro-protect"))
+        .args(["--config", path.to_str().unwrap(), "config", "show", "host"])
+        .env_clear()
+        .env("HOME", home.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr = {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.trim_end(), "<unset>");
+}
+
+#[test]
+fn init_template_refuses_to_overwrite_without_force() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"keep-me\"\n").expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "init",
+        "--template",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("already exists"));
+    let body = fs::read_to_string(cfg.path()).expect("read");
+    assert_eq!(body, "host = \"keep-me\"\n", "file was clobbered");
+}
+
+#[test]
+fn init_template_force_overwrites_existing_file() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "init",
+        "--template",
+        "--force",
+    ])
+    .assert()
+    .success();
+    let body = fs::read_to_string(cfg.path()).expect("read");
+    assert!(body.contains("# host ="), "template missing: {body}");
+    assert!(
+        !body.contains("host = \"old\""),
+        "old line survived: {body}"
+    );
+}
+
+// ----------------- config delete -----------------
+
+#[test]
+fn delete_yes_removes_file_without_prompt() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), SAMPLE).expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "delete",
+        "--yes",
+    ])
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("Deleted"));
+    assert!(!cfg.path().exists(), "file still present");
+}
+
+#[test]
+fn delete_short_flag_y_works() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), SAMPLE).expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "delete",
+        "-y",
+    ])
+    .assert()
+    .success();
+    assert!(!cfg.path().exists());
+}
+
+#[test]
+fn delete_refuses_without_tty_or_yes() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), SAMPLE).expect("write");
+    cmd.args(["--config", cfg.path().to_str().unwrap(), "config", "delete"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--yes"));
+    assert!(cfg.path().exists(), "file removed despite no confirmation");
+}
+
+#[test]
+fn delete_missing_file_errors() {
+    let mut cmd = common::isolated_cmd();
+    cmd.args([
+        "--config",
+        "/definitely/not/here.toml",
+        "config",
+        "delete",
+        "--yes",
+    ])
+    .assert()
+    .failure();
+}
+
+// ----------------- edit-creates-file warning -----------------
+
+#[test]
+fn edit_warns_when_creating_new_file() {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let cfg_path = dir.path().join("new.toml");
+    assert!(!cfg_path.exists());
+    let mut cmd = common::isolated_cmd();
+    cmd.args([
+        "--config",
+        cfg_path.to_str().unwrap(),
+        "config",
+        "edit",
+        "host",
+        "nvr.local",
+    ])
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("created new config file"));
+    assert!(cfg_path.exists());
+}
+
+#[test]
+fn edit_existing_file_emits_no_creation_warning() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
+    cmd.args([
+        "--config",
+        cfg.path().to_str().unwrap(),
+        "config",
+        "edit",
+        "host",
+        "new",
+    ])
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("created new config file").not());
+}
