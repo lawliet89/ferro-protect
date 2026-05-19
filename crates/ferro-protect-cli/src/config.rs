@@ -14,6 +14,7 @@
 //! API-key resolution lives in [`crate::api_key`]; this module just
 //! surfaces the file-derived sources to it via [`api_key::Sources`].
 
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -198,7 +199,7 @@ pub enum ConfigError {
         "config file not found at {}\n\
          (referenced via {})",
         path.display(),
-        via.as_user_hint(),
+        via,
     )]
     ExplicitMissing {
         path: PathBuf,
@@ -225,13 +226,14 @@ pub enum FileDiscoverySource {
     XdgDefault,
 }
 
-impl FileDiscoverySource {
-    pub(crate) const fn as_user_hint(self) -> &'static str {
-        match self {
+impl fmt::Display for FileDiscoverySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
             Self::Flag => "--config flag",
             Self::Env => "UNIFI_PROTECT_CONFIG_FILE env var",
             Self::XdgDefault => "XDG default path",
-        }
+        };
+        f.write_str(label)
     }
 }
 
@@ -339,9 +341,9 @@ where
     // Normalise tilde-paths once at load time so every downstream
     // consumer (`api_key::resolve`, `config show`, etc.) sees an
     // absolute path. TOML is not a shell, so `~/...` isn't expanded by
-    // the parser. The wizard's "write key to file" suggestion uses
-    // `~/.config/ferro-protect/api_key`, which would otherwise be
-    // written through verbatim and fail `read_to_string` at runtime.
+    // the parser. Users hand-editing `api_key_file = "~/..."` is the
+    // case to support; without this, `read_to_string` would fail at
+    // runtime against a literal `~` directory.
     if let Some(p) = file.api_key_file.take() {
         file.api_key_file = Some(expand_tilde(&p));
     }
@@ -349,7 +351,7 @@ where
     log::debug!(
         "config: loaded from {} (via {})",
         path.display(),
-        source.as_user_hint(),
+        source,
     );
     Ok(Some(LoadedConfig { file, path, source }))
 }
