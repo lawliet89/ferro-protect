@@ -348,7 +348,7 @@ where
         file.api_key_file = Some(expand_tilde(&p));
     }
 
-    log::debug!("config: loaded from {} (via {})", path.display(), source,);
+    log::debug!("config: loaded from {} (via {})", path.display(), source);
     Ok(Some(LoadedConfig { file, path, source }))
 }
 
