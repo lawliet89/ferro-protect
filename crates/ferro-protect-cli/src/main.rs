@@ -16,37 +16,45 @@ use ferro_protect_cli::{api_key, commands, logging};
 
 /// Command-line interface for the UniFi Protect integration API.
 ///
-/// All global flags can also be set via env vars (see `--help` long
-/// form on each) or in the TOML config file at
-/// `$XDG_CONFIG_HOME/ferro-protect/config.toml`. Precedence is
-/// **flag > env > config file > built-in default**. Run
-/// `ferro-protect config template` to write a commented-out scaffold
-/// to that path (or `--stdout` to print it), then hand-edit the
-/// values. `ferro-protect config show` inspects the effective
+/// # Global option resolution
+///
+/// Every global flag below can also be set via an env var or via the
+/// TOML config file at `$XDG_CONFIG_HOME/ferro-protect/config.toml`.
+/// The default precedence (highest first) is:
+///
+///   1. The flag on the command line.
+///   2. The matching `UNIFI_PROTECT_<NAME>` env var (e.g. `--host` ↔
+///      `UNIFI_PROTECT_HOST`).
+///   3. The same-named key in the config file.
+///   4. The built-in default.
+///
+/// `--api-key-file`, `--config`, and `--log-level` deviate from this
+/// chain; their docstrings spell out the actual order.
+///
+/// Run `ferro-protect config template` to write a commented-out
+/// scaffold of the file (or `--stdout` to print it), then hand-edit
+/// the values. `ferro-protect config show` inspects the effective
 /// configuration with per-field source attribution.
 #[derive(Debug, Parser)]
 #[command(name = "ferro-protect", version, about, long_about = None)]
 struct Cli {
     /// NVR hostname (or host:port). Mutually exclusive with --base-url.
     ///
-    /// Resolution order: this flag, then `UNIFI_PROTECT_HOST` env var,
-    /// then the `host` key in the config file. Hostname only -- no
-    /// scheme prefix, no path. The client wraps it as
-    /// `https://{host}/proxy/protect/integration`.
+    /// Hostname only -- no scheme prefix, no path. The client wraps
+    /// it as `https://{host}/proxy/protect/integration`.
     #[arg(long, global = true, conflicts_with = "base_url")]
     host: Option<String>,
 
     /// Override the entire base URL (useful for tests). Mutually
     /// exclusive with --host.
-    ///
-    /// Resolution order: this flag, then `UNIFI_PROTECT_BASE_URL` env
-    /// var, then the `base_url` key in the config file.
     #[arg(long, global = true)]
     base_url: Option<String>,
 
     /// Path to a file containing the API key.
     ///
-    /// Resolution order for the API key (highest first):
+    /// API-key resolution deviates from the standard chain because
+    /// there are two env vars and two file fields. Order (highest
+    /// first):
     ///   1. This flag.
     ///   2. `UNIFI_PROTECT_API_KEY_FILE` env (path).
     ///   3. `UNIFI_PROTECT_API_KEY` env (raw key).
@@ -61,13 +69,14 @@ struct Cli {
 
     /// Path to the TOML config file to load.
     ///
-    /// File-discovery precedence (highest first): this flag,
-    /// `UNIFI_PROTECT_CONFIG_FILE` env var, then the XDG default
-    /// (`$XDG_CONFIG_HOME/ferro-protect/config.toml`).
+    /// File discovery deviates from the standard chain: there is no
+    /// "config file" key, only which file to read. Order (highest
+    /// first): this flag, `UNIFI_PROTECT_CONFIG_FILE` env var, then
+    /// the XDG default (`$XDG_CONFIG_HOME/ferro-protect/config.toml`).
     ///
     /// The first two are *authoritative*: a missing file is a hard
-    /// error. The XDG default is *opportunistic*: a missing file at
-    /// the XDG path is fine and means "no config".
+    /// error. The XDG default is *opportunistic*: a missing file
+    /// there is fine and means "no config".
     ///
     /// The env-var name mirrors `UNIFI_PROTECT_API_KEY_FILE`: `_FILE`
     /// suffix means "path to a file" (vs. a raw value).
@@ -81,10 +90,7 @@ struct Cli {
     /// Skip TLS certificate validation. Use only with NVRs whose cert
     /// you cannot pin. Accepts `1`/`0`, `true`/`false`, `yes`/`no`,
     /// `on`/`off`, case-insensitive (also bare `--insecure` for true).
-    ///
-    /// Resolution order: this flag, then `UNIFI_PROTECT_INSECURE` env
-    /// var, then the `insecure` key in the config file. Default
-    /// `false`.
+    /// Default `false`.
     #[arg(
         long,
         global = true,
@@ -97,11 +103,9 @@ struct Cli {
 
     /// Emit JSON instead of human-formatted output. Accepts the same
     /// `1/0/true/false/yes/no/on/off` vocabulary as `--insecure`.
-    ///
-    /// Resolution order: this flag, then `UNIFI_PROTECT_JSON` env var,
-    /// then the `json` key in the config file. Default `false`. To
-    /// supply an explicit value use `--json=true` / `--json=false`;
-    /// bare `--json` is equivalent to `--json=true`.
+    /// Default `false`. To supply an explicit value use
+    /// `--json=true` / `--json=false`; bare `--json` is equivalent to
+    /// `--json=true`.
     #[arg(
         long,
         global = true,
@@ -114,10 +118,12 @@ struct Cli {
 
     /// Log level for diagnostic output (writes to stderr).
     ///
-    /// Resolution order: this flag, then `UNIFI_PROTECT_LOG` env var
-    /// (env_logger filter syntax), then `RUST_LOG`, then the
-    /// `log_level` key in the config file, then the literal default
-    /// `warn`.
+    /// Log filtering deviates from the standard chain because
+    /// `env_logger` already has its own `RUST_LOG` convention that
+    /// must keep working. Order (highest first): this flag,
+    /// `UNIFI_PROTECT_LOG` (env_logger filter syntax), `RUST_LOG`,
+    /// then the `log_level` key in the config file, then the
+    /// built-in default `warn`.
     #[arg(long, value_enum, global = true)]
     log_level: Option<LogLevel>,
 
@@ -184,7 +190,7 @@ async fn run(cli: Cli) -> Result<()> {
     // It also doesn't depend on the file's log_level (the file is
     // what it's *managing*), so flag-only init is correct here.
     if let Command::Config { action } = cli.command {
-        logging::init(cli.log_level.map(LogLevel::as_filter), None);
+        logging::init(cli.log_level.map(Into::into), None);
         return commands::config::run(action, cli.config.as_deref(), cli.json.unwrap_or(false))
             .map_err(Into::into);
     }
@@ -209,8 +215,8 @@ async fn run(cli: Cli) -> Result<()> {
     let file_log_fallback = loaded
         .as_ref()
         .and_then(|lc| lc.file.log_level)
-        .map(LogLevel::as_filter);
-    logging::init(cli.log_level.map(LogLevel::as_filter), file_log_fallback);
+        .map(Into::into);
+    logging::init(cli.log_level.map(Into::into), file_log_fallback);
 
     log::debug!(
         "ferro-protect starting: command={:?}, json={:?}, insecure={:?}",
