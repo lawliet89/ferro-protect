@@ -8,14 +8,14 @@
 //! Smoke tests for the logging wiring: confirm the level filter applies
 //! and goes to stderr.
 
-use assert_cmd::Command;
+mod common;
+
 use predicates::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn run_cmd(base_url: &str, args: &[&str]) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("ferro-protect")
-        .expect("binary built")
+    common::isolated_cmd()
         .env("UNIFI_PROTECT_API_KEY", "test-key")
         .env_remove("UNIFI_PROTECT_API_KEY_FILE")
         .env_remove("UNIFI_PROTECT_HOST")
@@ -90,8 +90,7 @@ async fn unifi_protect_log_env_var_works() {
     let server = start_info_mock().await;
     let url = server.uri();
     let assert = tokio::task::spawn_blocking(move || {
-        Command::cargo_bin("ferro-protect")
-            .expect("binary built")
+        common::isolated_cmd()
             .env("UNIFI_PROTECT_API_KEY", "test-key")
             .env_remove("UNIFI_PROTECT_API_KEY_FILE")
             .env_remove("UNIFI_PROTECT_HOST")
@@ -113,8 +112,7 @@ async fn cli_flag_overrides_env_var() {
     let server = start_info_mock().await;
     let url = server.uri();
     let assert = tokio::task::spawn_blocking(move || {
-        Command::cargo_bin("ferro-protect")
-            .expect("binary built")
+        common::isolated_cmd()
             .env("UNIFI_PROTECT_API_KEY", "test-key")
             .env_remove("UNIFI_PROTECT_API_KEY_FILE")
             .env_remove("UNIFI_PROTECT_HOST")

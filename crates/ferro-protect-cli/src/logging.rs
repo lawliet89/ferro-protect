@@ -7,23 +7,77 @@
 //! 2. `UNIFI_PROTECT_LOG` env var (parsed the same way `env_logger`
 //!    parses `RUST_LOG`).
 //! 3. `RUST_LOG` env var (env_logger's native default).
-//! 4. The literal default `warn`.
+//! 4. The `log_level` key from the TOML config file (passed in via the
+//!    `file_fallback` parameter — main is the one that knows where the
+//!    file was loaded from).
+//! 5. The literal default `warn`.
 //!
 //! Logs are written to **stderr** so they don't pollute the `stdout`
 //! that `--json` and the human tables produce.
 
+use std::fmt;
 use std::io::Write;
+
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 
 const APP_ENV: &str = "UNIFI_PROTECT_LOG";
 const DEFAULT_FILTER: &str = "warn";
 
+/// Log-level choice. Used by both the `--log-level` clap value-enum
+/// and the `log_level` key in the config file.
+///
+/// Lowercase wire form so both surfaces accept the same set of strings:
+/// `error`, `warn`, `info`, `debug`, `trace`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl From<LogLevel> for log::LevelFilter {
+    fn from(level: LogLevel) -> Self {
+        match level {
+            LogLevel::Error => Self::Error,
+            LogLevel::Warn => Self::Warn,
+            LogLevel::Info => Self::Info,
+            LogLevel::Debug => Self::Debug,
+            LogLevel::Trace => Self::Trace,
+        }
+    }
+}
+
+/// Wire-form string, matching the clap `ValueEnum` derive (lowercase).
+/// Used by `config show` to emit the same vocabulary as `--log-level`.
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        };
+        f.write_str(s)
+    }
+}
+
 /// Initialize the global logger.
 ///
-/// `cli_level` wins over both env vars when present. Re-initialisation
-/// is a no-op (env_logger's `try_init` returns an error which we
-/// swallow) so test binaries that call this from multiple `#[tokio::test]`
-/// async tasks don't trip over each other.
-pub fn init(cli_level: Option<log::LevelFilter>) {
+/// `cli_level` is the `--log-level` flag value (if any). `file_fallback`
+/// is the `log_level` key from the resolved config file (if any) — it
+/// sits below the env vars in the precedence chain because the env vars
+/// are stronger by docs and accept richer filter syntax that
+/// `LogLevel` can't represent.
+///
+/// Re-initialisation is a no-op (env_logger's `try_init` returns an
+/// error which we swallow) so test binaries that call this from
+/// multiple `#[tokio::test]` async tasks don't trip over each other.
+pub fn init(cli_level: Option<log::LevelFilter>, file_fallback: Option<log::LevelFilter>) {
     let mut builder = env_logger::Builder::new();
 
     // Pin format so test assertions can match exact strings. Module
@@ -44,13 +98,15 @@ pub fn init(cli_level: Option<log::LevelFilter>) {
     });
     builder.target(env_logger::Target::Stderr);
 
-    // Precedence: explicit flag > UNIFI_PROTECT_LOG > RUST_LOG > "warn".
+    // Precedence: explicit flag > UNIFI_PROTECT_LOG > RUST_LOG > file > "warn".
     if let Some(level) = cli_level {
         builder.filter_level(level);
     } else if let Ok(filter) = std::env::var(APP_ENV) {
         builder.parse_filters(&filter);
     } else if let Ok(filter) = std::env::var("RUST_LOG") {
         builder.parse_filters(&filter);
+    } else if let Some(level) = file_fallback {
+        builder.filter_level(level);
     } else {
         builder.parse_filters(DEFAULT_FILTER);
     }

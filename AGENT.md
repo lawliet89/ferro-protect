@@ -397,3 +397,78 @@ one level removed from what we actually want to verify.
 - When you encounter a deviation worth remembering later, add an
   entry to PLAN.md's "Deferred — revisit before 0.1.0" section
   (with trigger condition) rather than only leaving a TODO comment.
+
+### Prefer stdlib traits over bespoke `as_*` / `to_*` helpers
+
+When a method on an enum or struct returns *the* canonical string
+form or *the* canonical conversion to another type, use a standard
+trait rather than a hand-rolled `as_label() -> &'static str` /
+`as_filter() -> log::LevelFilter` / `to_str()` / similar.
+
+- Canonical string form → `impl Display`. Callers use `to_string()`,
+  `format!("{x}")`, `write!`, etc.
+- Canonical conversion to another type → `impl From<Foo> for Bar`.
+  Callers use `.into()` or `Into::into` (the latter is what you want
+  in `.map(...)` where the target type is inferred from context).
+- Canonical parse from a string → `impl FromStr`.
+
+Reserve bespoke methods for cases where the type has **multiple**
+distinct string/conversion forms (wire form vs. human form vs. log
+form), where picking one as the `Display` impl would be ambiguous.
+
+PR #10 lifted three of these (`ApiKeySource::as_user_label`,
+`LogLevel::as_filter`, `LogLevel::as_str`) into `Display`/`From`
+after review. New code should land in that shape directly.
+
+### Don't repeat shared precedence in clap field docs
+
+clap struct field doc-comments become `--help` text. When several
+global flags follow the same "flag > env > config file > default"
+chain (and most of them do in this CLI), summarise the chain **once**
+at the struct-level docstring (e.g. a `# Global option resolution`
+section) and only spell out per-flag rules on flags that **deviate**:
+different sources, different precedence, non-standard env-var
+semantics.
+
+A field doc whose only contribution is restating the standard chain
+is noise; it crowds out the per-flag specifics readers actually need.
+See `crates/ferro-protect-cli/src/main.rs::Cli` for the shape:
+`--api-key-file`, `--config`, and `--log-level` carry their own
+chain because each genuinely deviates; the rest don't.
+
+### Push back on low-utility, high-LOC features
+
+A human can ask you to implement a feature; you can still tell them
+it isn't worth the cost. Before saying "yes" and writing code,
+estimate the trade-off explicitly:
+
+- **End-user utility**: who actually benefits, in what scenario, and
+  how often? Bonus: would an existing tool (`rm`, `$EDITOR`, `--help`,
+  `complete`) already cover most of it?
+- **LOC cost**: code + tests + docs + any new dependencies. New deps
+  amplify the cost — each one brings supply-chain surface,
+  compile-time, and `cargo deny` review weight.
+- **Risk surface**: does this touch secrets, files, network, or other
+  unrecoverable state? Risky code is more expensive per line.
+
+If utility is low *and* LOC is high *and/or* risk is non-trivial,
+push back. State the trade-off in concrete terms ("this is ~N lines
+plus dep X, the alternative `$EDITOR foo` covers 90% of the cases").
+Offer an alternative (drop it, defer it, paper it with docs).
+
+Examples of the kind of pushback that's expected:
+
+- "We could add a `delete` subcommand, but `rm` already does this.
+  About 30 lines of code plus a confirmation prompt plus
+  `is-terminal`. I'd skip it."
+- "Format-preserving config edits need `toml_edit`'s DOM types and
+  ~200 LOC. `$EDITOR config.toml` covers 95% of the workflow.
+  Recommend dropping unless someone has shown they need it."
+- "This adds a derive macro to deduplicate three struct definitions.
+  It saves ~40 lines but creates a macro that needs to track every
+  divergence in clap/serde annotations. Net negative — keep the
+  duplication."
+
+The human gets the final call. But surface the trade-off *before*
+writing the code, not after. Implementing first and then proposing a
+simplification afterwards burns LOC on both sides.

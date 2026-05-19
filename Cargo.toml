@@ -23,7 +23,7 @@ log = "0.4"
 env_logger = "0.11"
 bytes = "1"
 url = "2"
-secrecy = "0.10"
+secrecy = { version = "0.10", features = ["serde"] }
 futures-util = "0.3"
 futures-core = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
@@ -38,10 +38,11 @@ typify = "0.4"
 schemars = "0.8"
 syn = { version = "2", features = ["full"] }
 prettyplease = "0.2"
-is-terminal = "0.4"
 insta = { version = "1", features = ["json"] }
 tempfile = "3"
 governor = { version = "0.10", default-features = false, features = ["std"] }
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
+etcetera = "0.11"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -3,6 +3,7 @@
 
 pub mod cameras;
 pub mod chimes;
+pub mod config;
 pub mod lights;
 pub mod liveviews;
 pub mod nvrs;
