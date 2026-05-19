@@ -218,6 +218,13 @@ async fn run(cli: Cli) -> Result<()> {
         .map(Into::into);
     logging::init(cli.log_level.map(Into::into), file_log_fallback);
 
+    if let Some(lc) = loaded.as_ref() {
+        log::debug!(
+            "config: loaded from {} (via {})",
+            lc.path.display(),
+            lc.source,
+        );
+    }
     log::debug!(
         "ferro-protect starting: command={:?}, json={:?}, insecure={:?}",
         std::mem::discriminant(&cli.command),

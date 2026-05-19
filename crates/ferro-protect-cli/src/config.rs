@@ -19,7 +19,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
@@ -160,18 +160,41 @@ impl ConfigFile {
     /// these for us.
     ///
     /// # Errors
-    /// Returns [`ConfigError::HostAndBaseUrl`] or
-    /// [`ConfigError::ApiKeyAndFile`] when the relevant pair is both set.
-    #[expect(
-        clippy::missing_const_for_fn,
-        reason = "ConfigError variants with String fields make this not const-fn-able without splitting the error type"
-    )]
+    /// - [`ConfigError::HostAndBaseUrl`] / [`ConfigError::ApiKeyAndFile`]
+    ///   — mutual-exclusion violation.
+    /// - [`ConfigError::EmptyValue`] — a string-valued field is set but
+    ///   empty or whitespace-only. We reject these here rather than
+    ///   pass them through, because they all fail later (empty URL,
+    ///   `read_to_string` on an empty path, empty auth header) with
+    ///   less actionable messages.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.host.is_some() && self.base_url.is_some() {
             return Err(ConfigError::HostAndBaseUrl);
         }
         if self.api_key.is_some() && self.api_key_file.is_some() {
             return Err(ConfigError::ApiKeyAndFile);
+        }
+        if let Some(s) = self.host.as_deref()
+            && s.trim().is_empty()
+        {
+            return Err(ConfigError::EmptyValue { field: "host" });
+        }
+        if let Some(s) = self.base_url.as_deref()
+            && s.trim().is_empty()
+        {
+            return Err(ConfigError::EmptyValue { field: "base_url" });
+        }
+        if let Some(p) = self.api_key_file.as_deref()
+            && p.as_os_str().is_empty()
+        {
+            return Err(ConfigError::EmptyValue {
+                field: "api_key_file",
+            });
+        }
+        if let Some(s) = self.api_key.as_ref()
+            && s.expose_secret().trim().is_empty()
+        {
+            return Err(ConfigError::EmptyValue { field: "api_key" });
         }
         Ok(())
     }
@@ -212,6 +235,11 @@ pub enum ConfigError {
          expected one of 1/0, true/false, yes/no, on/off (case-insensitive)"
     )]
     BadEnvBool { name: &'static str, value: String },
+    #[error(
+        "config file: `{field}` is empty. \
+         Comment the line out or remove the entry instead of setting it to an empty value."
+    )]
+    EmptyValue { field: &'static str },
 }
 
 /// Which input picked the config-file path.
@@ -309,6 +337,9 @@ where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     let (path, source) = resolve_path(flag, env)?;
+    // No `log::debug!` in this function: the only caller (`main::run`)
+    // initialises logging *after* `load`, so any messages emitted here
+    // would be silently dropped. `main` logs the outcome itself.
     let raw = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -316,13 +347,7 @@ where
                 FileDiscoverySource::Flag | FileDiscoverySource::Env => {
                     Err(ConfigError::ExplicitMissing { path, via: source })
                 }
-                FileDiscoverySource::XdgDefault => {
-                    log::debug!(
-                        "config: no config file found at XDG default {}",
-                        path.display()
-                    );
-                    Ok(None)
-                }
+                FileDiscoverySource::XdgDefault => Ok(None),
             };
         }
         Err(io_err) => {
@@ -348,7 +373,6 @@ where
         file.api_key_file = Some(expand_tilde(&p));
     }
 
-    log::debug!("config: loaded from {} (via {})", path.display(), source);
     Ok(Some(LoadedConfig { file, path, source }))
 }
 
@@ -681,6 +705,52 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(cf.validate(), Err(ConfigError::ApiKeyAndFile)));
+    }
+
+    #[test]
+    fn validate_rejects_empty_or_whitespace_strings() {
+        for (cf, expected) in [
+            (
+                ConfigFile {
+                    host: Some(String::new()),
+                    ..Default::default()
+                },
+                "host",
+            ),
+            (
+                ConfigFile {
+                    host: Some("   ".into()),
+                    ..Default::default()
+                },
+                "host",
+            ),
+            (
+                ConfigFile {
+                    base_url: Some("  \t".into()),
+                    ..Default::default()
+                },
+                "base_url",
+            ),
+            (
+                ConfigFile {
+                    api_key_file: Some(PathBuf::new()),
+                    ..Default::default()
+                },
+                "api_key_file",
+            ),
+            (
+                ConfigFile {
+                    api_key: Some(SecretString::from("   ")),
+                    ..Default::default()
+                },
+                "api_key",
+            ),
+        ] {
+            match cf.validate() {
+                Err(ConfigError::EmptyValue { field }) => assert_eq!(field, expected),
+                other => panic!("expected EmptyValue({expected}), got {other:?}"),
+            }
+        }
     }
 
     #[test]
