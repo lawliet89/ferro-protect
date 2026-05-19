@@ -398,6 +398,44 @@ one level removed from what we actually want to verify.
   entry to PLAN.md's "Deferred — revisit before 0.1.0" section
   (with trigger condition) rather than only leaving a TODO comment.
 
+### Prefer stdlib traits over bespoke `as_*` / `to_*` helpers
+
+When a method on an enum or struct returns *the* canonical string
+form or *the* canonical conversion to another type, use a standard
+trait rather than a hand-rolled `as_label() -> &'static str` /
+`as_filter() -> log::LevelFilter` / `to_str()` / similar.
+
+- Canonical string form → `impl Display`. Callers use `to_string()`,
+  `format!("{x}")`, `write!`, etc.
+- Canonical conversion to another type → `impl From<Foo> for Bar`.
+  Callers use `.into()` or `Into::into` (the latter is what you want
+  in `.map(...)` where the target type is inferred from context).
+- Canonical parse from a string → `impl FromStr`.
+
+Reserve bespoke methods for cases where the type has **multiple**
+distinct string/conversion forms (wire form vs. human form vs. log
+form), where picking one as the `Display` impl would be ambiguous.
+
+PR #10 lifted three of these (`ApiKeySource::as_user_label`,
+`LogLevel::as_filter`, `LogLevel::as_str`) into `Display`/`From`
+after review. New code should land in that shape directly.
+
+### Don't repeat shared precedence in clap field docs
+
+clap struct field doc-comments become `--help` text. When several
+global flags follow the same "flag > env > config file > default"
+chain (and most of them do in this CLI), summarise the chain **once**
+at the struct-level docstring (e.g. a `# Global option resolution`
+section) and only spell out per-flag rules on flags that **deviate**:
+different sources, different precedence, non-standard env-var
+semantics.
+
+A field doc whose only contribution is restating the standard chain
+is noise; it crowds out the per-flag specifics readers actually need.
+See `crates/ferro-protect-cli/src/main.rs::Cli` for the shape:
+`--api-key-file`, `--config`, and `--log-level` carry their own
+chain because each genuinely deviates; the rest don't.
+
 ### Push back on low-utility, high-LOC features
 
 A human can ask you to implement a feature; you can still tell them
