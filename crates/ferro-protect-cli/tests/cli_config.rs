@@ -502,20 +502,28 @@ fn template_writes_with_0600_perms() {
 #[cfg(unix)]
 #[test]
 fn template_atomic_write_does_not_leave_tmp_file() {
+    // Use a per-test directory rather than placing the cfg directly in
+    // `/tmp`: the assertion below scans the cfg's parent for any stale
+    // `tmp_sibling` output, and if `/tmp` is the parent it also catches
+    // *other* concurrent tests' in-flight tmp files (each test's
+    // `template --force` creates one before rename). Isolating in a
+    // fresh tempdir means the scan only sees this invocation's output.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg_path = dir.path().join("config.toml");
+    fs::write(&cfg_path, "host = \"old\"\n").expect("write");
+
     let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "host = \"old\"\n").expect("write");
     cmd.args([
         "--config",
-        cfg.path().to_str().unwrap(),
+        cfg_path.to_str().unwrap(),
         "config",
         "template",
         "--force",
     ])
     .assert()
     .success();
-    let parent = cfg.path().parent().expect("parent");
-    let leftovers: Vec<_> = fs::read_dir(parent)
+
+    let leftovers: Vec<_> = fs::read_dir(dir.path())
         .expect("read_dir")
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
