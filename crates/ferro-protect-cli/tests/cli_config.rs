@@ -147,6 +147,85 @@ fn show_json_single_key_emits_value_and_source_object() {
     assert!(parsed["source"].as_str().unwrap().contains("config file"));
 }
 
+/// Regression guard: an inline `api_key = "..."` must never appear in
+/// any `config show` output. The masking logic lives in `collect_rows`
+/// (renders `<set>`/`<unset>` instead of the secret) and the public
+/// `Serialize` impl on `ResolvedConfig` deliberately omits the key, but
+/// either could regress and the secret would land on stdout. Cover the
+/// three rendering paths: human table, single-key, and `--json`.
+#[test]
+fn show_never_prints_inline_api_key_secret() {
+    const SECRET: &str = "supersecret-must-not-leak";
+    let config_body = format!(
+        "host = \"nvr.local\"\n\
+         api_key = \"{SECRET}\"\n\
+         insecure = true\n"
+    );
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(cfg.path(), &config_body).expect("write");
+    let cfg_arg = cfg.path().to_str().unwrap();
+
+    let must_not_leak = |label: &str, bytes: &[u8]| {
+        let s = String::from_utf8_lossy(bytes);
+        assert!(!s.contains(SECRET), "{label} leaked api_key value: {s}");
+    };
+
+    // Human table.
+    let out = common::isolated_cmd()
+        .args(["--config", cfg_arg, "config", "show"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    must_not_leak("table stdout", &out.stdout);
+    must_not_leak("table stderr", &out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("<set>"),
+        "expected <set>; stdout = {stdout}"
+    );
+
+    // Single-key form.
+    let out = common::isolated_cmd()
+        .args(["--config", cfg_arg, "config", "show", "api_key"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    must_not_leak("single-key stdout", &out.stdout);
+    must_not_leak("single-key stderr", &out.stderr);
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), "<set>");
+
+    // JSON full table.
+    let out = common::isolated_cmd()
+        .args(["--config", cfg_arg, "--json=true", "config", "show"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    must_not_leak("json stdout", &out.stdout);
+    must_not_leak("json stderr", &out.stderr);
+
+    // JSON single key.
+    let out = common::isolated_cmd()
+        .args([
+            "--config",
+            cfg_arg,
+            "--json=true",
+            "config",
+            "show",
+            "api_key",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    must_not_leak("json single-key stdout", &out.stdout);
+    must_not_leak("json single-key stderr", &out.stderr);
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(parsed["value"], "<set>");
+}
+
 // ----------------- config path -----------------
 
 #[test]
@@ -195,6 +274,16 @@ fn path_resolves_xdg_default_when_file_exists() {
 fn path_errors_when_xdg_default_is_missing() {
     let (_home, mut cmd) = common::cmd_with_tempdir_home();
     cmd.args(["config", "path"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no config file"));
+}
+
+#[test]
+fn path_errors_when_resolved_path_is_a_directory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cmd = common::isolated_cmd();
+    cmd.args(["--config", dir.path().to_str().unwrap(), "config", "path"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("no config file"));
