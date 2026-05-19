@@ -299,7 +299,7 @@ fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec
     rows.push(ShowRow {
         field: "api_key",
         value: api_key.map_or_else(|| "<unset>".to_owned(), |_| "<set>".to_owned()),
-        source: api_key.map_or_else(|| "default".to_owned(), |s| s.as_user_label().to_owned()),
+        source: api_key.map_or_else(|| "default".to_owned(), |s| s.to_string()),
     });
     rows.push(ShowRow {
         field: "insecure",
@@ -313,7 +313,7 @@ fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec
     });
     rows.push(ShowRow {
         field: "log_level",
-        value: resolved.log_level.value.as_str().to_owned(),
+        value: resolved.log_level.value.to_string(),
         source: source_label(Some(&resolved.log_level.source), cfg_path),
     });
     rows

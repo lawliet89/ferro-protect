@@ -13,6 +13,7 @@
 //! than read directly, so this module stays independent of the config
 //! loader.
 
+use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -39,16 +40,16 @@ pub enum ApiKeySource {
     ConfigRaw,
 }
 
-impl ApiKeySource {
-    #[must_use]
-    pub const fn as_user_label(self) -> &'static str {
-        match self {
+impl fmt::Display for ApiKeySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
             Self::Flag => "--api-key-file flag",
             Self::EnvFile => "env: UNIFI_PROTECT_API_KEY_FILE",
             Self::EnvRaw => "env: UNIFI_PROTECT_API_KEY",
             Self::ConfigFile => "config file: api_key_file",
             Self::ConfigRaw => "config file: api_key",
-        }
+        };
+        f.write_str(label)
     }
 }
 

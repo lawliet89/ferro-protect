@@ -15,6 +15,7 @@
 //! Logs are written to **stderr** so they don't pollute the `stdout`
 //! that `--json` and the human tables produce.
 
+use std::fmt;
 use std::io::Write;
 
 use clap::ValueEnum;
@@ -38,30 +39,30 @@ pub enum LogLevel {
     Trace,
 }
 
-impl LogLevel {
-    #[must_use]
-    pub const fn as_filter(self) -> log::LevelFilter {
-        match self {
-            Self::Error => log::LevelFilter::Error,
-            Self::Warn => log::LevelFilter::Warn,
-            Self::Info => log::LevelFilter::Info,
-            Self::Debug => log::LevelFilter::Debug,
-            Self::Trace => log::LevelFilter::Trace,
+impl From<LogLevel> for log::LevelFilter {
+    fn from(level: LogLevel) -> Self {
+        match level {
+            LogLevel::Error => Self::Error,
+            LogLevel::Warn => Self::Warn,
+            LogLevel::Info => Self::Info,
+            LogLevel::Debug => Self::Debug,
+            LogLevel::Trace => Self::Trace,
         }
     }
+}
 
-    /// Wire-form string, matching the clap `ValueEnum` derive
-    /// (lowercase). Used by `config show` and `config edit` to emit /
-    /// accept the same vocabulary as `--log-level`.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
+/// Wire-form string, matching the clap `ValueEnum` derive (lowercase).
+/// Used by `config show` to emit the same vocabulary as `--log-level`.
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
             Self::Error => "error",
             Self::Warn => "warn",
             Self::Info => "info",
             Self::Debug => "debug",
             Self::Trace => "trace",
-        }
+        };
+        f.write_str(s)
     }
 }
 
