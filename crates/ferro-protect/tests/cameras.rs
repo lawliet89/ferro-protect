@@ -168,6 +168,115 @@ async fn snapshot_default_options_sends_bare_path() {
 }
 
 #[tokio::test]
+async fn snapshot_maps_non_2xx_to_api_error() {
+    // Directly exercises `get_bytes`'s error branch: a non-2xx must
+    // be mapped through `Error::from_response` rather than returned
+    // as a "successful" body of error-page bytes. Uses 404 (unknown
+    // camera) rather than a 5xx so the GET retry middleware doesn't
+    // re-fire and blow the `expect(1)` count.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/cameras/abc/snapshot"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string(FIXTURE_NOT_FOUND)
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server).await;
+    let id = CameraId::from("abc".to_string());
+    let err = client
+        .cameras()
+        .snapshot(&id)
+        .await
+        .expect_err("404 should error");
+    match err {
+        Error::Api {
+            status,
+            code,
+            message,
+        } => {
+            assert_eq!(status, 404);
+            assert_eq!(code, "notFound");
+            assert!(
+                message.contains("abc123"),
+                "expected message to include server text, got: {message}"
+            );
+        }
+        other => panic!("expected Api error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn rtsps_stream_maps_non_2xx_to_api_error() {
+    // The server rejects an unsupported/empty quality list with a
+    // 400; the library must surface that as `Error::Api` rather than
+    // attempting to deserialise the error body as a stream map.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/rtsps-stream"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string(r#"{"name":"badRequest","error":"unsupported quality"}"#)
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server).await;
+    let id = CameraId::from("abc".to_string());
+    let err = client
+        .cameras()
+        .rtsps_stream(&id, &[ChannelQuality::High])
+        .await
+        .expect_err("400 should error");
+    match err {
+        Error::Api { status, code, .. } => {
+            assert_eq!(status, 400);
+            assert_eq!(code, "badRequest");
+        }
+        other => panic!("expected Api error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn talkback_session_maps_non_2xx_to_api_error() {
+    // Unknown camera → 404. Exercises `post_empty_json`'s error
+    // branch so the no-body POST path maps failures like every other
+    // endpoint.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/talkback-session"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string(FIXTURE_NOT_FOUND)
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server).await;
+    let id = CameraId::from("abc".to_string());
+    let err = client
+        .cameras()
+        .talkback_session(&id)
+        .await
+        .expect_err("404 should error");
+    match err {
+        Error::Api { status, code, .. } => {
+            assert_eq!(status, 404);
+            assert_eq!(code, "notFound");
+        }
+        other => panic!("expected Api error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn rtsps_stream_posts_request_body_and_orders_response() {
     // Caller requests `[low, high]`. Server response orders them as
     // `{ high, low }`. The library must return them in request order

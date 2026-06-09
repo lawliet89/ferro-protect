@@ -127,8 +127,8 @@ impl ProtectClient {
     // POST/PATCH/DELETE/binary helpers. `post_json`, `post_empty_json`,
     // and `get_bytes` are wired up by phase 5's camera endpoints;
     // `patch_json` and `send_no_content` are still inert (carrying
-    // `#[expect(dead_code, ...)]`) until phases 6-8 wire up writes,
-    // viewer assignment, and DELETE-shaped endpoints. Keeping the
+    // `#[expect(dead_code, ...)]`) until phases 8-9 wire up PATCH/POST
+    // writes and the action/DELETE-shaped endpoints. Keeping the
     // shapes here means each future endpoint stays a one-line wrapper.
 
     pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
@@ -157,7 +157,7 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
+    #[expect(dead_code, reason = "wired up in phase 8")]
     pub(crate) async fn patch_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -174,11 +174,12 @@ impl ProtectClient {
     }
 
     /// Send a request whose 2xx response carries no body (typically 204).
-    /// Phases 5-7 use this for actions, mutations without a return shape,
-    /// and DELETE-style endpoints. Defined here so endpoint methods stay
-    /// one-liners without each one calling `json_response` and then
-    /// discarding `()`-shaped deserialisation errors on empty bodies.
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
+    /// Phases 8-9 use this for mutations without a return shape, the
+    /// action endpoints, and DELETE-style endpoints. Defined here so
+    /// endpoint methods stay one-liners without each one calling
+    /// `json_response` and then discarding `()`-shaped deserialisation
+    /// errors on empty bodies.
+    #[expect(dead_code, reason = "wired up in phases 8-9")]
     pub(crate) async fn send_no_content(&self, method: reqwest::Method, path: &str) -> Result<()> {
         debug!("{method} {path}");
         let response = self
