@@ -146,11 +146,15 @@ rejected with a sanitized error that doesn't echo the secret.
 ferro-protect config template            # write a commented-out scaffold to the config path
 ferro-protect config template --force    # overwrite an existing file
 ferro-protect config template --stdout   # print the scaffold; no file is written
-ferro-protect config show                # print effective config (field/value table)
-ferro-protect config show host           # bare value, scriptable
-ferro-protect config show --json         # JSON form (array of {field, value}; single-key: {value})
+ferro-protect config show                # print effective non-secret config (field/value table)
+ferro-protect config show --json         # same fields as a JSON array — pipe through `jq`
 ferro-protect config path                # print the resolved config file path
 ```
+
+`config show` deliberately omits the API key itself (even as a
+`<set>`/`<unset>` marker). A "no API key provided" error at runtime
+already explains the source ladder; shadowing it from `show` would
+only tempt users to grep for the value.
 
 Users hand-edit the TOML file with their preferred editor — there is
 no in-CLI editor, wizard, or delete. The deliberate trade-off was to

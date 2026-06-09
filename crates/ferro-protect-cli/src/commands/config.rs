@@ -27,12 +27,19 @@ use crate::config::{self, EffectiveConfig, FIELDS, Flags};
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
-    /// Print the effective resolved configuration as a field/value
-    /// table.
+    /// Print the effective **non-secret** configuration as a
+    /// field/value table.
+    ///
+    /// Shows: `host`, `base_url`, `api_key_file`, `insecure`, `json`,
+    /// `log_level`. The API key itself is intentionally absent --
+    /// even rendering it as `<set>`/`<unset>` would shadow the
+    /// runtime resolver and tempt users to grep for it. The "no API
+    /// key provided" error at runtime explains the source ladder
+    /// (flag, env, file pointer) when none is supplied.
     ///
     /// Only `--config` is honoured here (to pick which file to
     /// inspect). Other per-invocation flags like `--host` or
-    /// `--insecure` are ignored — they would only be true for this
+    /// `--insecure` are ignored -- they would only be true for this
     /// invocation. The usual flag > env > file > default precedence
     /// still applies to real commands like `info`.
     ///
@@ -40,8 +47,8 @@ pub enum Action {
     /// `UNIFI_PROTECT_LOG` / `RUST_LOG` further filter the runtime
     /// logger (env_logger syntax) and are not shown here.
     ///
-    /// `--json` emits the same fields as a JSON array — pipe through
-    /// `jq` for scripting.
+    /// `--json` emits the same fields as a JSON array of
+    /// `{field, value}` -- pipe through `jq` for scripting.
     Show,
     /// Print the resolved config file path on a single line. Useful in
     /// shell scripts (`$(ferro-protect config path)`). `--json` emits

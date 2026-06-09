@@ -34,7 +34,7 @@ use ferro_protect_cli::{api_key, commands, logging};
 /// Run `ferro-protect config template` to write a commented-out
 /// scaffold of the file (or `--stdout` to print it), then hand-edit
 /// the values. `ferro-protect config show` inspects the effective
-/// resolved configuration as a field/value table.
+/// non-secret configuration (the API key itself is never displayed).
 #[derive(Debug, Parser)]
 #[command(name = "ferro-protect", version, about, long_about = None)]
 struct Cli {
