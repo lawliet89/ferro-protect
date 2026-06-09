@@ -84,15 +84,23 @@ impl Default for RetryConfig {
 /// [`RateLimitConfig`] and [`RetryConfig`].
 #[derive(Clone)]
 pub struct ProtectClient {
-    /// Used for idempotent reads (GET). Always wraps the retry middleware.
-    http_read: ClientWithMiddleware,
-    /// Used for mutations (POST/PATCH/DELETE/...). Bypasses the retry
-    /// middleware by default so a transient 5xx after the server already
-    /// applied the change is not silently re-fired; opt back in with
+    /// Used for retry-safe requests: GET reads and the read-shaped
+    /// POSTs (`rtsps-stream`, `talkback-session`). The POSTs are not
+    /// strictly idempotent — each allocates fresh ephemeral session
+    /// credentials — but they mutate no persistent NVR state, so a
+    /// retry is safe: at worst it allocates a redundant short-lived
+    /// session, which the server reaps on its own. Always wraps the
+    /// retry middleware so a transient 429/5xx is transparently
+    /// recovered.
+    http_retriable: ClientWithMiddleware,
+    /// Used for genuine mutations (PATCH/DELETE, and the mutating
+    /// POSTs that land in phase 8). Bypasses the retry middleware by
+    /// default so a transient 5xx after the server already applied the
+    /// change is not silently re-fired; opt back in with
     /// `ProtectClientBuilder::retry_on_mutations(true)`. The rate-limit
     /// middleware is still applied so writes count against the same
     /// shared budget as reads.
-    http_write: ClientWithMiddleware,
+    http_mutating: ClientWithMiddleware,
     base_url: Url,
 }
 
@@ -120,24 +128,35 @@ impl ProtectClient {
 
     pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         debug!("GET {path}");
-        let response = self.http_read.get(self.url(path)?).send().await?;
+        let response = self.http_retriable.get(self.url(path)?).send().await?;
         Self::json_response(response).await
     }
 
-    // The helpers below are unused at phase 4 but cover the shapes
-    // phases 5-8 will need (PATCH/POST bodies, 204 No Content, binary
-    // payloads). Keeping them here means each future endpoint is a
-    // one-line wrapper rather than a one-helper-plus-one-line churn.
+    // POST/PATCH/DELETE/binary helpers. The two `*_retriable` POST
+    // helpers and `get_bytes` are wired up by phase 5's camera
+    // endpoints and route through the retrying `http_retriable`
+    // client; `patch_json` and `send_no_content` are still inert
+    // (carrying `#[expect(dead_code, ...)]`) until phases 8-9 wire up
+    // the PATCH/DELETE writes and the mutating POSTs, and route through
+    // the no-retry `http_mutating` client. Keeping the shapes here
+    // means each future endpoint stays a one-line wrapper.
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
-    pub(crate) async fn post_json<B: Serialize + Sync, T: DeserializeOwned>(
+    /// POST that is safe to retry: it allocates fresh ephemeral
+    /// credentials but mutates no persistent state, so re-issuing on a
+    /// transient failure at worst leaves a redundant short-lived
+    /// session behind (not strictly idempotent, but harmless). Routed
+    /// through `http_retriable` so a transient 429/5xx is recovered —
+    /// `rtsps-stream` is the only caller today. Genuine creates (e.g.
+    /// `liveviews create` in phase 8) must use a mutating POST helper on
+    /// `http_mutating`, not this one.
+    pub(crate) async fn post_json_retriable<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
     ) -> Result<T> {
-        debug!("POST {path}");
+        debug!("POST {path} (retry-safe)");
         let response = self
-            .http_write
+            .http_retriable
             .post(self.url(path)?)
             .json(body)
             .send()
@@ -145,7 +164,22 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
+    /// Retry-safe POST with no request body, parsing the JSON response.
+    /// Distinct from a body-carrying POST because setting a
+    /// `Content-Type: application/json` body even for `()` emits a
+    /// 4-byte `null`, which the talkback-session endpoint (its only
+    /// caller) rejects. Routed through `http_retriable` for the same
+    /// retry rationale as [`Self::post_json_retriable`].
+    pub(crate) async fn post_empty_json_retriable<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T> {
+        debug!("POST {path} (retry-safe, no body)");
+        let response = self.http_retriable.post(self.url(path)?).send().await?;
+        Self::json_response(response).await
+    }
+
+    #[expect(dead_code, reason = "wired up in phase 8")]
     pub(crate) async fn patch_json<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -153,7 +187,7 @@ impl ProtectClient {
     ) -> Result<T> {
         debug!("PATCH {path}");
         let response = self
-            .http_write
+            .http_mutating
             .patch(self.url(path)?)
             .json(body)
             .send()
@@ -162,15 +196,16 @@ impl ProtectClient {
     }
 
     /// Send a request whose 2xx response carries no body (typically 204).
-    /// Phases 5-7 use this for actions, mutations without a return shape,
-    /// and DELETE-style endpoints. Defined here so endpoint methods stay
-    /// one-liners without each one calling `json_response` and then
+    /// Phases 8-9 use this for mutations without a return shape, the
+    /// action endpoints, and DELETE-style endpoints. Routed through the
+    /// no-retry `http_mutating` client. Defined here so endpoint methods
+    /// stay one-liners without each one calling `json_response` and then
     /// discarding `()`-shaped deserialisation errors on empty bodies.
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
+    #[expect(dead_code, reason = "wired up in phases 8-9")]
     pub(crate) async fn send_no_content(&self, method: reqwest::Method, path: &str) -> Result<()> {
         debug!("{method} {path}");
         let response = self
-            .http_write
+            .http_mutating
             .request(method, self.url(path)?)
             .send()
             .await?;
@@ -180,10 +215,9 @@ impl ProtectClient {
         Err(Error::from_response(response).await)
     }
 
-    #[expect(dead_code, reason = "wired up in phases 5-8")]
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
-        let response = self.http_read.get(self.url(path)?).send().await?;
+        let response = self.http_retriable.get(self.url(path)?).send().await?;
         if response.status().is_success() {
             return Ok(response.bytes().await?);
         }
@@ -365,7 +399,7 @@ impl ProtectClientBuilder {
         // middleware so every retry attempt acquires a fresh permit.
         // This ensures retries are counted against the server budget
         // rather than bypassing the limiter's per-window quota.
-        let http_read = {
+        let http_retriable = {
             let mut builder =
                 MiddlewareClientBuilder::new(reqwest_client.clone()).with(retry_middleware.clone());
             if let Some(ref limiter) = opt_limiter {
@@ -374,7 +408,7 @@ impl ProtectClientBuilder {
             builder.build()
         };
 
-        let http_write = {
+        let http_mutating = {
             let mut builder = MiddlewareClientBuilder::new(reqwest_client);
             if self.retry_on_mutations {
                 builder = builder.with(retry_middleware);
@@ -402,8 +436,8 @@ impl ProtectClientBuilder {
             "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}"
         );
         Ok(ProtectClient {
-            http_read,
-            http_write,
+            http_retriable,
+            http_mutating,
             base_url,
         })
     }
