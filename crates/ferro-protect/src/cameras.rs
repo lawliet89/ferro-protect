@@ -117,8 +117,10 @@ impl<'a> CamerasApi<'a> {
             qualities: &'a [ChannelQuality],
         }
         let path = format!("/v1/cameras/{id}/rtsps-stream");
-        let created: CreatedRtspsStreams =
-            self.client.post_json(&path, &Body { qualities }).await?;
+        let created: CreatedRtspsStreams = self
+            .client
+            .post_json_idempotent(&path, &Body { qualities })
+            .await?;
         let streams = streams_in_request_order(qualities, &created);
         info!(
             "created {} RTSPS stream URL(s) for camera {id} (requested {} qualit{})",
@@ -143,7 +145,7 @@ impl<'a> CamerasApi<'a> {
     /// an unknown camera.
     pub async fn talkback_session(&self, id: &CameraId) -> Result<TalkbackSession> {
         let path = format!("/v1/cameras/{id}/talkback-session");
-        let raw: GeneratedTalkbackSession = self.client.post_empty_json(&path).await?;
+        let raw: GeneratedTalkbackSession = self.client.post_empty_json_idempotent(&path).await?;
         let session = TalkbackSession {
             bits_per_sample: *raw.bits_per_sample,
             codec: raw.codec.0,

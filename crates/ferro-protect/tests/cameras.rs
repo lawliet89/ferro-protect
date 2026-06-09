@@ -12,12 +12,14 @@
 //! error mapping.
 
 use std::num::NonZeroU64;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ferro_protect::models::{CameraId, ChannelQuality, SnapshotChannel, SnapshotOptions};
 use ferro_protect::{Error, ProtectClient};
 use secrecy::SecretString;
 use wiremock::matchers::{body_bytes, body_json, header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const FIXTURE_EMPTY_LIST: &str = include_str!("fixtures/cameras_list_empty.json");
 const FIXTURE_NOT_FOUND: &str = include_str!("fixtures/camera_not_found.json");
@@ -340,6 +342,60 @@ async fn rtsps_stream_drops_qualities_not_returned_by_server() {
         .expect("rtsps_stream call succeeds");
     assert_eq!(streams.len(), 1);
     assert_eq!(streams[0].quality, ChannelQuality::High);
+}
+
+#[tokio::test]
+async fn rtsps_stream_retries_on_429() {
+    // `rtsps_stream` is a read-shaped (idempotent) POST, so it must
+    // route through the retrying client and recover from a 429 the
+    // same way a GET does — this is the regression guard for the live
+    // test that surfaced a non-retried 429 on this endpoint. Also
+    // proves the JSON request body survives the retry (the middleware
+    // re-clones it), since the second attempt must still match
+    // `body_json`.
+    struct First429ThenOk {
+        calls: Arc<AtomicUsize>,
+    }
+    impl Respond for First429ThenOk {
+        fn respond(&self, _: &Request) -> ResponseTemplate {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                ResponseTemplate::new(429)
+                    .set_body_string(r#"{"name":"tooManyRequests","error":"Too many requests"}"#)
+                    .insert_header("content-type", "application/json")
+                    // `Retry-After: 0` keeps the test fast while still
+                    // exercising the header-honouring retry path.
+                    .insert_header("retry-after", "0")
+            } else {
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"high":"rtsps://nvr/cam-abc-high"}"#)
+                    .insert_header("content-type", "application/json")
+            }
+        }
+    }
+
+    let server = MockServer::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path("/v1/cameras/abc/rtsps-stream"))
+        .and(body_json(serde_json::json!({ "qualities": ["high"] })))
+        .respond_with(First429ThenOk {
+            calls: Arc::clone(&calls),
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server).await;
+    let id = CameraId::from("abc".to_string());
+    let streams = client
+        .cameras()
+        .rtsps_stream(&id, &[ChannelQuality::High])
+        .await
+        .expect("rtsps_stream recovers from 429");
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "exactly one retry");
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].url, "rtsps://nvr/cam-abc-high");
 }
 
 #[tokio::test]
