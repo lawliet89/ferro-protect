@@ -84,13 +84,15 @@ impl Default for RetryConfig {
 /// [`RateLimitConfig`] and [`RetryConfig`].
 #[derive(Clone)]
 pub struct ProtectClient {
-    /// Used for idempotent requests: GET reads and the read-shaped
-    /// POSTs (`rtsps-stream`, `talkback-session`) that allocate
-    /// ephemeral credentials without mutating persistent NVR state.
-    /// Always wraps the retry middleware, so a transient 429/5xx is
-    /// transparently recovered — safe precisely because re-issuing
-    /// these requests has no side effect.
-    http_idempotent: ClientWithMiddleware,
+    /// Used for retry-safe requests: GET reads and the read-shaped
+    /// POSTs (`rtsps-stream`, `talkback-session`). The POSTs are not
+    /// strictly idempotent — each allocates fresh ephemeral session
+    /// credentials — but they mutate no persistent NVR state, so a
+    /// retry is safe: at worst it allocates a redundant short-lived
+    /// session, which the server reaps on its own. Always wraps the
+    /// retry middleware so a transient 429/5xx is transparently
+    /// recovered.
+    http_retriable: ClientWithMiddleware,
     /// Used for genuine mutations (PATCH/DELETE, and the mutating
     /// POSTs that land in phase 8). Bypasses the retry middleware by
     /// default so a transient 5xx after the server already applied the
@@ -126,33 +128,35 @@ impl ProtectClient {
 
     pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         debug!("GET {path}");
-        let response = self.http_idempotent.get(self.url(path)?).send().await?;
+        let response = self.http_retriable.get(self.url(path)?).send().await?;
         Self::json_response(response).await
     }
 
-    // POST/PATCH/DELETE/binary helpers. The two `*_idempotent` POST
+    // POST/PATCH/DELETE/binary helpers. The two `*_retriable` POST
     // helpers and `get_bytes` are wired up by phase 5's camera
-    // endpoints and route through the retrying `http_idempotent`
+    // endpoints and route through the retrying `http_retriable`
     // client; `patch_json` and `send_no_content` are still inert
     // (carrying `#[expect(dead_code, ...)]`) until phases 8-9 wire up
     // the PATCH/DELETE writes and the mutating POSTs, and route through
     // the no-retry `http_mutating` client. Keeping the shapes here
     // means each future endpoint stays a one-line wrapper.
 
-    /// POST whose effect is idempotent (allocates ephemeral
-    /// credentials, mutates no persistent state). Routed through
-    /// `http_idempotent` so a transient 429/5xx is retried — `rtsps-stream`
-    /// is the only caller today. Genuine creates (e.g. `liveviews
-    /// create` in phase 8) must use a mutating POST helper on
+    /// POST that is safe to retry: it allocates fresh ephemeral
+    /// credentials but mutates no persistent state, so re-issuing on a
+    /// transient failure at worst leaves a redundant short-lived
+    /// session behind (not strictly idempotent, but harmless). Routed
+    /// through `http_retriable` so a transient 429/5xx is recovered —
+    /// `rtsps-stream` is the only caller today. Genuine creates (e.g.
+    /// `liveviews create` in phase 8) must use a mutating POST helper on
     /// `http_mutating`, not this one.
-    pub(crate) async fn post_json_idempotent<B: Serialize + Sync, T: DeserializeOwned>(
+    pub(crate) async fn post_json_retriable<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
     ) -> Result<T> {
-        debug!("POST {path} (idempotent)");
+        debug!("POST {path} (retry-safe)");
         let response = self
-            .http_idempotent
+            .http_retriable
             .post(self.url(path)?)
             .json(body)
             .send()
@@ -160,18 +164,18 @@ impl ProtectClient {
         Self::json_response(response).await
     }
 
-    /// Idempotent POST with no request body, parsing the JSON response.
+    /// Retry-safe POST with no request body, parsing the JSON response.
     /// Distinct from a body-carrying POST because setting a
     /// `Content-Type: application/json` body even for `()` emits a
     /// 4-byte `null`, which the talkback-session endpoint (its only
-    /// caller) rejects. Routed through `http_idempotent` for the same
-    /// retry rationale as [`Self::post_json_idempotent`].
-    pub(crate) async fn post_empty_json_idempotent<T: DeserializeOwned>(
+    /// caller) rejects. Routed through `http_retriable` for the same
+    /// retry rationale as [`Self::post_json_retriable`].
+    pub(crate) async fn post_empty_json_retriable<T: DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<T> {
-        debug!("POST {path} (idempotent, no body)");
-        let response = self.http_idempotent.post(self.url(path)?).send().await?;
+        debug!("POST {path} (retry-safe, no body)");
+        let response = self.http_retriable.post(self.url(path)?).send().await?;
         Self::json_response(response).await
     }
 
@@ -213,7 +217,7 @@ impl ProtectClient {
 
     pub(crate) async fn get_bytes(&self, path: &str) -> Result<Bytes> {
         debug!("GET {path}");
-        let response = self.http_idempotent.get(self.url(path)?).send().await?;
+        let response = self.http_retriable.get(self.url(path)?).send().await?;
         if response.status().is_success() {
             return Ok(response.bytes().await?);
         }
@@ -395,7 +399,7 @@ impl ProtectClientBuilder {
         // middleware so every retry attempt acquires a fresh permit.
         // This ensures retries are counted against the server budget
         // rather than bypassing the limiter's per-window quota.
-        let http_idempotent = {
+        let http_retriable = {
             let mut builder =
                 MiddlewareClientBuilder::new(reqwest_client.clone()).with(retry_middleware.clone());
             if let Some(ref limiter) = opt_limiter {
@@ -432,7 +436,7 @@ impl ProtectClientBuilder {
             "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}"
         );
         Ok(ProtectClient {
-            http_idempotent,
+            http_retriable,
             http_mutating,
             base_url,
         })

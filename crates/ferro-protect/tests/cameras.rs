@@ -247,7 +247,7 @@ async fn rtsps_stream_maps_non_2xx_to_api_error() {
 
 #[tokio::test]
 async fn talkback_session_maps_non_2xx_to_api_error() {
-    // Unknown camera → 404. Exercises `post_empty_json`'s error
+    // Unknown camera → 404. Exercises `post_empty_json_retriable`'s error
     // branch so the no-body POST path maps failures like every other
     // endpoint.
     let server = MockServer::start().await;
@@ -346,7 +346,7 @@ async fn rtsps_stream_drops_qualities_not_returned_by_server() {
 
 #[tokio::test]
 async fn rtsps_stream_retries_on_429() {
-    // `rtsps_stream` is a read-shaped (idempotent) POST, so it must
+    // `rtsps_stream` is a read-shaped, retry-safe POST, so it must
     // route through the retrying client and recover from a 429 the
     // same way a GET does — this is the regression guard for the live
     // test that surfaced a non-retried 429 on this endpoint. Also
@@ -401,7 +401,7 @@ async fn rtsps_stream_retries_on_429() {
 #[tokio::test]
 async fn talkback_session_posts_empty_body_and_maps_response() {
     // `body_bytes(b"")` is the load-bearing assertion: it pins
-    // `post_empty_json_idempotent`'s no-body contract. A regression to
+    // `post_empty_json_retriable`'s no-body contract. A regression to
     // a body-carrying `post(&())` would emit a 4-byte `null` body with
     // a JSON content-type and would fail this matcher (mirroring what
     // the real talkback endpoint does — it rejects `null` request

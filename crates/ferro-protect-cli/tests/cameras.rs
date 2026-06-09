@@ -357,7 +357,7 @@ async fn cameras_talkback_json_uses_camel_case_field_names() {
 async fn cameras_talkback_renders_session_details() {
     let server = MockServer::start().await;
     // `body_bytes(b"")` is the load-bearing assertion of this test:
-    // `post_empty_json_idempotent` must send no body. A regression to
+    // `post_empty_json_retriable` must send no body. A regression to
     // a body-carrying `post(&())` would emit a 4-byte `null` payload
     // with a JSON content-type and would fail this matcher — and the
     // real talkback endpoint, which rejects `null` request bodies.

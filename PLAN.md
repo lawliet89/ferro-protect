@@ -297,7 +297,7 @@ By the end of phase 4 the library has roughly 14 typed methods and the CLI is a 
 to run without the mutation gate.
 
 1. `cameras snapshot <id>` — returns `Bytes` in the library. CLI writes to `--out <PATH>`, to stdout if not a TTY, errors with friendly message if stdout is a TTY and no `--out`. Use the `is-terminal` crate. This endpoint uses the shared raw-bytes HTTP helper.
-2. `cameras rtsps <id>` — returns the RTSPS URL as a string. Trivial.
+2. `cameras rtsps <id> --quality <high,medium,low,package>` — returns one RTSPS URL per requested quality. Library returns `Vec<RtspsStream { quality, url }>` ordered by request (dropping qualities the server didn't populate); CLI prints a table.
 3. `cameras talkback <id>` — returns the RTP stream URL (`rtp://{host}:{port}`) and codec metadata. Library exposes the structured info, CLI prints it. Out of scope: actual audio piping.
 
 All three have `live_read_*` tests (calling them does not change NVR state). The snapshot live test asserts the body is non-empty and starts with the JPEG magic bytes (`FF D8 FF`); do not snapshot-test the bytes themselves. One commit per endpoint or one combined — your call. Log the decision.
