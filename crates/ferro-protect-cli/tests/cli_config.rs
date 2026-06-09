@@ -96,41 +96,45 @@ fn show_json_emits_array_of_rows() {
     assert!(arr.iter().any(|row| row["field"] == "api_key_file"));
 }
 
-/// Inline `api_key = "..."` in the config file was removed: a
-/// secret-bearing TOML field would land in commits, backups, and
-/// dotfile syncs. `deny_unknown_fields` on `ConfigFile` rejects it at
-/// parse time, and the secret never reaches stdout. Regression guard.
+/// `api_key = "..."` at any depth in the config file is rejected
+/// without echoing the secret value to stderr. The loader
+/// recursively scans the parsed TOML before the typed
+/// deserialization runs, so even nested or `deny_unknown_fields`
+/// error paths can't leak the value.
 #[test]
 fn inline_api_key_in_config_file_is_rejected() {
     const SECRET: &str = "supersecret-must-not-leak";
-    let config_body = format!(
-        "host = \"nvr.local\"\n\
-         api_key = \"{SECRET}\"\n"
-    );
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), &config_body).expect("write");
-    let out = common::isolated_cmd()
-        .args(["--config", cfg.path().to_str().unwrap(), "config", "show"])
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let merged = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    assert!(
-        !merged.contains(SECRET),
-        "secret leaked into stdout/stderr: {merged}"
-    );
-    // `deny_unknown_fields` surfaces the offending key in the parse
-    // error, so the message names `api_key` even though we don't echo
-    // the value.
-    assert!(
-        merged.contains("api_key"),
-        "expected parse error to mention `api_key`: {merged}"
-    );
+
+    for (label, body) in [
+        (
+            "top-level",
+            format!("host = \"nvr.local\"\napi_key = \"{SECRET}\"\n"),
+        ),
+        ("nested table", format!("[auth]\napi_key = \"{SECRET}\"\n")),
+        ("dotted key", format!("auth.api_key = \"{SECRET}\"\n")),
+    ] {
+        let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+        fs::write(cfg.path(), &body).expect("write");
+        let out = common::isolated_cmd()
+            .args(["--config", cfg.path().to_str().unwrap(), "config", "show"])
+            .assert()
+            .failure()
+            .get_output()
+            .clone();
+        let merged = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(
+            !merged.contains(SECRET),
+            "[{label}] secret leaked into stdout/stderr: {merged}"
+        );
+        assert!(
+            merged.contains("api_key"),
+            "[{label}] expected error to mention `api_key`: {merged}"
+        );
+    }
 }
 
 // ----------------- config path -----------------

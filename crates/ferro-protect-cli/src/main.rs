@@ -53,13 +53,15 @@ struct Cli {
     /// Path to a file containing the API key.
     ///
     /// API-key resolution deviates from the standard chain because
-    /// there are two env vars and two file fields. Order (highest
-    /// first):
+    /// there are two env vars in addition to the flag and file
+    /// pointer. Order (highest first):
     ///   1. This flag.
     ///   2. `UNIFI_PROTECT_API_KEY_FILE` env (path).
     ///   3. `UNIFI_PROTECT_API_KEY` env (raw key).
     ///   4. `api_key_file` in the config file (path).
-    ///   5. `api_key` in the config file (raw, discouraged).
+    ///
+    /// Inline `api_key = "..."` in the TOML is deliberately rejected
+    /// at load time -- use `UNIFI_PROTECT_API_KEY` for ad-hoc raw keys.
     ///
     /// The `env =` mapping is **deliberately not** declared on this
     /// flag so clap doesn't bypass the manual precedence logic in

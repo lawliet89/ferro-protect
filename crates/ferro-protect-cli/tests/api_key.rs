@@ -141,7 +141,8 @@ fn nonexistent_file_errors_with_path() {
 fn trims_trailing_whitespace_from_file_contents() {
     let (_d, path) = write_key_file("  the-key  \n\n");
     let mut warnings = Vec::new();
-    let key = api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect("resolves");
+    let key =
+        api_key::resolve(&sources_flag(&path), &empty_env(), &mut warnings).expect("resolves");
     assert_eq!(key.expose_secret(), "the-key");
 }
 

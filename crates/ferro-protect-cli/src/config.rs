@@ -275,7 +275,12 @@ where
         path: path.clone(),
         source: e,
     })?;
-    if value.as_table().is_some_and(|t| t.contains_key("api_key")) {
+    // Recursive scan: a nested `[some_table] api_key = "..."` would
+    // also leak through `deny_unknown_fields`'s error message if the
+    // unknown table happens to be reported with surrounding context.
+    // Bailing on *any* `api_key` key, at any depth, makes the
+    // "never leak the secret" guarantee invariant to TOML shape.
+    if contains_api_key(&value) {
         return Err(ConfigError::InlineApiKey { path });
     }
     let mut file: ConfigFile = value.try_into().map_err(|e| ConfigError::Parse {
@@ -294,6 +299,18 @@ where
     }
 
     Ok(Some(LoadedConfig { file, path, source }))
+}
+
+/// Recursively check whether any key named `api_key` appears anywhere
+/// in a TOML value. Used by [`load`] to refuse secret-bearing files
+/// without going through `deny_unknown_fields`, whose parse error
+/// would echo the offending line (including the secret) to stderr.
+fn contains_api_key(v: &toml::Value) -> bool {
+    match v {
+        toml::Value::Table(t) => t.contains_key("api_key") || t.values().any(contains_api_key),
+        toml::Value::Array(a) => a.iter().any(contains_api_key),
+        _ => false,
+    }
 }
 
 /// Replace a leading `~/` (or bare `~`) with the value of `$HOME`.
