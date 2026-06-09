@@ -196,9 +196,6 @@ where
     if cf.api_key_file.is_some() {
         return Some(ApiKeySource::ConfigFile);
     }
-    if cf.api_key.is_some() {
-        return Some(ApiKeySource::ConfigRaw);
-    }
     None
 }
 
@@ -392,6 +389,13 @@ fn build_template() -> String {
          # values with per-field source attribution.\n",
     );
     for f in FIELDS {
+        // Empty `example` marks fields that are addressable via
+        // `config show` but cannot be set in the file (currently just
+        // `api_key`). Rendering `# api_key = ` with no RHS would
+        // mislead users into pasting their key into the TOML.
+        if f.example.is_empty() {
+            continue;
+        }
         out.push('\n');
         for line in f.description.lines() {
             out.push_str("# ");

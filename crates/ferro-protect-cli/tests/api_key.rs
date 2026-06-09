@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use ferro_protect_cli::api_key::{self, ApiKeyError, ApiKeySource, ENV_KEY, ENV_KEY_FILE, Sources};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 use tempfile::TempDir;
 
 /// Build a closure suitable for `api_key::resolve`'s `env` parameter. The
@@ -214,39 +214,11 @@ fn config_file_pointer_used_when_no_flag_or_env() {
 }
 
 #[test]
-fn config_raw_used_when_no_other_source() {
-    let secret = SecretString::from("from-config-raw");
-    let sources = Sources {
-        config_raw: Some(&secret),
-        ..Sources::default()
-    };
-    let mut warnings = Vec::new();
-    let (key, source) = api_key::resolve(&sources, &empty_env(), &mut warnings).expect("resolves");
-    assert_eq!(key.expose_secret(), "from-config-raw");
-    assert_eq!(source, ApiKeySource::ConfigRaw);
-}
-
-#[test]
-fn config_file_pointer_wins_over_config_raw() {
+fn env_wins_over_config_file_pointer() {
     let (_d, path) = write_key_file("from-config-pointer");
-    let secret = SecretString::from("from-config-raw");
-    let sources = Sources {
-        config_file: Some(&path),
-        config_raw: Some(&secret),
-        ..Sources::default()
-    };
-    let mut warnings = Vec::new();
-    let (key, source) = api_key::resolve(&sources, &empty_env(), &mut warnings).expect("resolves");
-    assert_eq!(key.expose_secret(), "from-config-pointer");
-    assert_eq!(source, ApiKeySource::ConfigFile);
-}
-
-#[test]
-fn env_wins_over_config_sources() {
-    let secret = SecretString::from("from-config-raw");
     let env = env_from([(ENV_KEY, "from-raw-env")]);
     let sources = Sources {
-        config_raw: Some(&secret),
+        config_file: Some(&path),
         ..Sources::default()
     };
     let mut warnings = Vec::new();

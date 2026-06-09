@@ -1,15 +1,18 @@
-//! Resolve the Protect API key from one of five sources, in priority order.
+//! Resolve the Protect API key from one of four sources, in priority order.
 //!
 //! 1. `--api-key-file <PATH>` flag (path only -- never a raw key on the
 //!    command line where it would land in shell history and ps output).
 //! 2. `UNIFI_PROTECT_API_KEY_FILE` env var (path).
 //! 3. `UNIFI_PROTECT_API_KEY` env var (raw key).
 //! 4. Config file `api_key_file` field (path).
-//! 5. Config file `api_key` field (raw key).
+//!
+//! Raw keys are never accepted via the config file: a secret-bearing
+//! TOML field would land in commits, backups, and dotfile syncs. Use
+//! `UNIFI_PROTECT_API_KEY` for ad-hoc raw keys.
 //!
 //! The resolver is pure with respect to its `env` callback so tests can
 //! supply their own environment instead of mutating the process's. The
-//! config-file sources are passed in via the [`Sources`] struct rather
+//! config-file source is passed in via the [`Sources`] struct rather
 //! than read directly, so this module stays independent of the config
 //! loader.
 
@@ -17,7 +20,7 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use thiserror::Error;
 
 pub const ENV_KEY_FILE: &str = "UNIFI_PROTECT_API_KEY_FILE";
@@ -36,8 +39,6 @@ pub enum ApiKeySource {
     EnvRaw,
     /// Config file `api_key_file` field (path).
     ConfigFile,
-    /// Config file `api_key` field (raw key).
-    ConfigRaw,
 }
 
 impl fmt::Display for ApiKeySource {
@@ -47,23 +48,21 @@ impl fmt::Display for ApiKeySource {
             Self::EnvFile => "env: UNIFI_PROTECT_API_KEY_FILE",
             Self::EnvRaw => "env: UNIFI_PROTECT_API_KEY",
             Self::ConfigFile => "config file: api_key_file",
-            Self::ConfigRaw => "config file: api_key",
         };
         f.write_str(label)
     }
 }
 
-/// Inputs to [`resolve`], grouped so callers don't have to thread four
+/// Inputs to [`resolve`], grouped so callers don't have to thread three
 /// positional args.
 ///
-/// The two `config_*` fields come from the merged
-/// [`crate::config::ConfigFile`] when one is loaded; pass `None` for
-/// both when no config file exists.
+/// The `config_file` field comes from the merged
+/// [`crate::config::ConfigFile`] when one is loaded; pass `None` when
+/// no config file exists.
 #[derive(Debug, Default)]
 pub struct Sources<'a> {
     pub flag_file: Option<&'a Path>,
     pub config_file: Option<&'a Path>,
-    pub config_raw: Option<&'a SecretString>,
 }
 
 #[derive(Debug, Error)]
@@ -73,8 +72,7 @@ pub enum ApiKeyError {
          * --api-key-file <PATH>\n  \
          * UNIFI_PROTECT_API_KEY_FILE=<PATH> (path to a file containing the key)\n  \
          * UNIFI_PROTECT_API_KEY=<KEY> (raw key in env)\n  \
-         * api_key_file = \"<PATH>\" in the config file\n  \
-         * api_key = \"<KEY>\" in the config file (discouraged; use api_key_file)"
+         * api_key_file = \"<PATH>\" in the config file"
     )]
     NotProvided,
 
@@ -147,16 +145,6 @@ where
     }
     if let Some(path) = sources.config_file {
         return Ok((read_key_file(path, warnings)?, ApiKeySource::ConfigFile));
-    }
-    if let Some(secret) = sources.config_raw {
-        let exposed = secret.expose_secret();
-        let trimmed = exposed.trim();
-        if !trimmed.is_empty() {
-            return Ok((
-                SecretString::from(trimmed.to_string()),
-                ApiKeySource::ConfigRaw,
-            ));
-        }
     }
     Err(ApiKeyError::NotProvided)
 }

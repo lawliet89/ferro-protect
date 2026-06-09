@@ -255,7 +255,6 @@ async fn run(cli: Cli) -> Result<()> {
             config_file: loaded
                 .as_ref()
                 .and_then(|lc| lc.file.api_key_file.as_deref()),
-            config_raw: loaded.as_ref().and_then(|lc| lc.file.api_key.as_ref()),
         };
         api_key::resolve(&sources, &env, &mut stderr)?
     };

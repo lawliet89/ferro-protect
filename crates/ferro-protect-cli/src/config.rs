@@ -19,7 +19,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
@@ -40,7 +39,9 @@ pub const ENV_CONFIG_FILE: &str = "UNIFI_PROTECT_CONFIG_FILE";
 /// * the "valid fields: …" help text in error messages
 ///
 /// `api_key` is addressable in `show` (rendered as `<set>`/`<unset>`)
-/// but never has a per-flag CLI surface.
+/// but is not settable in the config file -- the only sources are the
+/// `--api-key-file` flag, the two `UNIFI_PROTECT_API_KEY*` env vars,
+/// and the file's `api_key_file` pointer.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldMeta {
     /// Field name as it appears in TOML and on the CLI.
@@ -49,7 +50,9 @@ pub struct FieldMeta {
     /// in the `config template` scaffold.
     pub description: &'static str,
     /// Example RHS for the `config template` scaffold. Include quotes
-    /// if the value is a string.
+    /// if the value is a string. The empty string is a marker meaning
+    /// "skip this field in the template" — used for show-only rows
+    /// (like `api_key`) that aren't settable in the file.
     pub example: &'static str,
     /// Env var that `config::resolve` consults for this field, or `None`.
     /// `None` for `api_key` (the secret-bearing raw-key env var
@@ -83,8 +86,12 @@ pub const FIELDS: &[FieldMeta] = &[
     },
     FieldMeta {
         key: "api_key",
-        description: "Raw API key inline (discouraged -- prefer `api_key_file`).",
-        example: "\"...\"",
+        description: "API key (resolved from flag / env / `api_key_file`). Read-only here.",
+        // Empty `example` is the marker that the template scaffold uses
+        // to skip a field: `api_key` is a `show`-only row, not a file
+        // field, so emitting `# api_key = ...` would mislead users into
+        // pasting their key into the TOML.
+        example: "",
         env_var: None,
     },
     FieldMeta {
@@ -133,10 +140,13 @@ fn env_var_for(key: &str) -> &'static str {
 /// set" (distinct from "set to the type default"), which lets us tell
 /// "explicit `false`" apart from "absent" for source attribution.
 ///
-/// `deny_unknown_fields` traps typos like `apikey = ...` at parse time.
-/// Mutual-exclusion rules between fields (`host` vs `base_url`,
-/// `api_key` vs `api_key_file`) are enforced by [`Self::validate`],
-/// which the loader calls after parsing.
+/// `deny_unknown_fields` traps typos like `apikey = ...` at parse
+/// time. The deliberately-removed `api_key = "..."` raw-key field is
+/// short-circuited *before* this struct is deserialized (see [`load`])
+/// so the TOML parse error -- which echoes the offending line -- can't
+/// leak a secret. Mutual exclusion between `host` and `base_url` is
+/// enforced by [`Self::validate`], which the loader calls after
+/// parsing.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
@@ -146,8 +156,6 @@ pub struct ConfigFile {
     pub base_url: Option<String>,
     #[serde(default)]
     pub api_key_file: Option<PathBuf>,
-    #[serde(default)]
-    pub api_key: Option<SecretString>,
     #[serde(default)]
     pub insecure: Option<bool>,
     #[serde(default)]
@@ -162,19 +170,15 @@ impl ConfigFile {
     /// these for us.
     ///
     /// # Errors
-    /// - [`ConfigError::HostAndBaseUrl`] / [`ConfigError::ApiKeyAndFile`]
-    ///   — mutual-exclusion violation.
+    /// - [`ConfigError::HostAndBaseUrl`] — mutual-exclusion violation.
     /// - [`ConfigError::EmptyValue`] — a string-valued field is set but
     ///   empty or whitespace-only. We reject these here rather than
     ///   pass them through, because they all fail later (empty URL,
-    ///   `read_to_string` on an empty path, empty auth header) with
-    ///   less actionable messages.
+    ///   `read_to_string` on an empty path) with less actionable
+    ///   messages.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.host.is_some() && self.base_url.is_some() {
             return Err(ConfigError::HostAndBaseUrl);
-        }
-        if self.api_key.is_some() && self.api_key_file.is_some() {
-            return Err(ConfigError::ApiKeyAndFile);
         }
         if let Some(s) = self.host.as_deref()
             && s.trim().is_empty()
@@ -198,11 +202,6 @@ impl ConfigFile {
                 field: "api_key_file",
             });
         }
-        if let Some(s) = self.api_key.as_ref()
-            && s.expose_secret().trim().is_empty()
-        {
-            return Err(ConfigError::EmptyValue { field: "api_key" });
-        }
         Ok(())
     }
 }
@@ -223,8 +222,14 @@ pub enum ConfigError {
     },
     #[error("config file: cannot set both `host` and `base_url`")]
     HostAndBaseUrl,
-    #[error("config file: cannot set both `api_key` and `api_key_file`")]
-    ApiKeyAndFile,
+    #[error(
+        "config file {}: inline `api_key = \"…\"` is no longer accepted \
+         (a secret in TOML lands in commits, backups, and dotfile syncs). \
+         Use the `UNIFI_PROTECT_API_KEY` env var for ad-hoc raw keys, or \
+         `api_key_file = \"<PATH>\"` to point at a file holding the key.",
+        path.display(),
+    )]
+    InlineApiKey { path: PathBuf },
     #[error(
         "config file not found at {}\n\
          (referenced via {})",
@@ -337,8 +342,8 @@ where
 ///   at a missing file.
 /// - [`ConfigError::Read`] — I/O error other than `NotFound`.
 /// - [`ConfigError::Parse`] — TOML deserialization error.
-/// - [`ConfigError::HostAndBaseUrl`] / [`ConfigError::ApiKeyAndFile`]
-///   — file-level mutual-exclusion violation.
+/// - [`ConfigError::HostAndBaseUrl`] — file-level mutual-exclusion
+///   violation.
 pub fn load<E>(flag: Option<&Path>, env: &E) -> Result<Option<LoadedConfig>, ConfigError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
@@ -365,7 +370,21 @@ where
         }
     };
 
-    let mut file: ConfigFile = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
+    // Two-step parse so we can return a sanitized error if the file
+    // still has an inline `api_key = "..."` field: `deny_unknown_fields`
+    // on `ConfigFile` would otherwise echo the offending TOML line --
+    // including the secret value -- in the parse error. Parse to a
+    // generic `Table` first (lenient), short-circuit on `api_key`, then
+    // `try_into` for the typed deserialization (which still enforces
+    // `deny_unknown_fields` on every other field).
+    let value: toml::Value = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
+        path: path.clone(),
+        source: e,
+    })?;
+    if value.as_table().is_some_and(|t| t.contains_key("api_key")) {
+        return Err(ConfigError::InlineApiKey { path });
+    }
+    let mut file: ConfigFile = value.try_into().map_err(|e| ConfigError::Parse {
         path: path.clone(),
         source: e,
     })?;
@@ -734,16 +753,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_api_key_plus_file() {
-        let cf = ConfigFile {
-            api_key: Some(SecretString::from("k")),
-            api_key_file: Some(PathBuf::from("/k")),
-            ..Default::default()
-        };
-        assert!(matches!(cf.validate(), Err(ConfigError::ApiKeyAndFile)));
-    }
-
-    #[test]
     fn validate_rejects_empty_or_whitespace_strings() {
         for (cf, expected) in [
             (
@@ -780,13 +789,6 @@ mod tests {
                     ..Default::default()
                 },
                 "api_key_file",
-            ),
-            (
-                ConfigFile {
-                    api_key: Some(SecretString::from("   ")),
-                    ..Default::default()
-                },
-                "api_key",
             ),
         ] {
             match cf.validate() {

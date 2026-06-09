@@ -124,13 +124,12 @@ CI jobs — anywhere argv is awkward to control. Distinguish this from
 host = "nvr.local"
 # base_url = "https://nvr.local/proxy/protect/integration"
 
-# Preferred: pointer to a separate key file. A leading `~/` is expanded
-# at load time using `$HOME`; on Windows that variable is usually unset,
-# so prefer an absolute path there.
+# Pointer to a separate key file. A leading `~/` is expanded at load
+# time using `$HOME`; on Windows that variable is usually unset, so
+# prefer an absolute path there. Inline `api_key = "..."` in this
+# file is deliberately *not* accepted -- use `UNIFI_PROTECT_API_KEY`
+# for ad-hoc raw keys.
 api_key_file = "~/.config/ferro-protect/api_key"
-# Discouraged alternative: raw key inline. `chmod 600` the file
-# yourself; the loader treats it as a last-resort source.
-# api_key = "..."
 
 insecure = false
 json = false
@@ -138,8 +137,8 @@ log_level = "warn"  # one of: error, warn, info, debug, trace
 ```
 
 Unknown keys are rejected at load time (typo guard). Setting both
-`host` and `base_url`, or both `api_key` and `api_key_file`, is also
-rejected.
+`host` and `base_url` is also rejected. An inline `api_key = "..."` is
+rejected with a sanitized error that doesn't echo the secret.
 
 ### Managing the config file
 
@@ -166,17 +165,16 @@ bootstrap. Other subcommands (`info`, `cameras list`, …) still treat
 a missing XDG default as "no config" and fall back to env vars +
 flags as usual.
 
-There is **no CLI surface for writing `api_key`** — the raw key would
-land in shell history, `ps`, and the parent process's argv. Use one of
-the safer paths:
+There is **no CLI surface for writing the API key** — the raw key
+would land in shell history, `ps`, and the parent process's argv.
+Inline `api_key = "..."` in the TOML file is also deliberately
+rejected (a secret in a versioned config file lands in commits,
+backups, and dotfile syncs). Use one of the safer paths:
 
 - `api_key_file = "<PATH>"` in the config file (point at a file the
   shell will not log), or
 - `UNIFI_PROTECT_API_KEY_FILE=<PATH>` / `UNIFI_PROTECT_API_KEY=<KEY>`
   env vars (only as visible to your shell session).
-
-If you really want an inline `api_key` in the config file,
-hand-edit it and `chmod 600` the file yourself.
 
 ### Config files and the test suite
 
@@ -194,13 +192,12 @@ with a config-file-only setup, source `.env.local` or set
 
 ### Security notes
 
-If you hand-edit `config.toml` with a raw `api_key`, `chmod 600` the
-file yourself — there is no in-CLI editor, so nothing else will
-tighten perms for you. The loader emits a stderr warning if a
-referenced `api_key_file` has lax permissions. `config template`
-writes its scaffold with mode 0600 at creation on Unix (atomic
-temp-write + rename), so a `--force` overwrite of a file that
-previously held a raw key never widens visibility.
+The loader emits a stderr warning if a referenced `api_key_file` has
+lax permissions. `config template` writes its scaffold with mode 0600
+at creation on Unix (atomic temp-write + rename); the mode preserves
+the safety guarantee that previously held when this PR also supported
+inline `api_key` (a `--force` overwrite never widened visibility of a
+file that used to hold a secret).
 
 A future option would be keyring-backed storage; not built today.
 

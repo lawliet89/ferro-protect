@@ -147,83 +147,41 @@ fn show_json_single_key_emits_value_and_source_object() {
     assert!(parsed["source"].as_str().unwrap().contains("config file"));
 }
 
-/// Regression guard: an inline `api_key = "..."` must never appear in
-/// any `config show` output. The masking logic lives in `collect_rows`
-/// (renders `<set>`/`<unset>` instead of the secret) and the public
-/// `Serialize` impl on `ResolvedConfig` deliberately omits the key, but
-/// either could regress and the secret would land on stdout. Cover the
-/// three rendering paths: human table, single-key, and `--json`.
+/// Inline `api_key = "..."` in the config file was removed: a
+/// secret-bearing TOML field would land in commits, backups, and
+/// dotfile syncs. `deny_unknown_fields` on `ConfigFile` rejects it at
+/// parse time, and the secret never reaches stdout. Regression guard.
 #[test]
-fn show_never_prints_inline_api_key_secret() {
+fn inline_api_key_in_config_file_is_rejected() {
     const SECRET: &str = "supersecret-must-not-leak";
     let config_body = format!(
         "host = \"nvr.local\"\n\
-         api_key = \"{SECRET}\"\n\
-         insecure = true\n"
+         api_key = \"{SECRET}\"\n"
     );
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), &config_body).expect("write");
-    let cfg_arg = cfg.path().to_str().unwrap();
-
-    let must_not_leak = |label: &str, bytes: &[u8]| {
-        let s = String::from_utf8_lossy(bytes);
-        assert!(!s.contains(SECRET), "{label} leaked api_key value: {s}");
-    };
-
-    // Human table.
     let out = common::isolated_cmd()
-        .args(["--config", cfg_arg, "config", "show"])
+        .args(["--config", cfg.path().to_str().unwrap(), "config", "show"])
         .assert()
-        .success()
+        .failure()
         .get_output()
         .clone();
-    must_not_leak("table stdout", &out.stdout);
-    must_not_leak("table stderr", &out.stderr);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("<set>"),
-        "expected <set>; stdout = {stdout}"
+    let merged = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
     );
-
-    // Single-key form.
-    let out = common::isolated_cmd()
-        .args(["--config", cfg_arg, "config", "show", "api_key"])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    must_not_leak("single-key stdout", &out.stdout);
-    must_not_leak("single-key stderr", &out.stderr);
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), "<set>");
-
-    // JSON full table.
-    let out = common::isolated_cmd()
-        .args(["--config", cfg_arg, "--json=true", "config", "show"])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    must_not_leak("json stdout", &out.stdout);
-    must_not_leak("json stderr", &out.stderr);
-
-    // JSON single key.
-    let out = common::isolated_cmd()
-        .args([
-            "--config",
-            cfg_arg,
-            "--json=true",
-            "config",
-            "show",
-            "api_key",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    must_not_leak("json single-key stdout", &out.stdout);
-    must_not_leak("json single-key stderr", &out.stderr);
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert_eq!(parsed["value"], "<set>");
+    assert!(
+        !merged.contains(SECRET),
+        "secret leaked into stdout/stderr: {merged}"
+    );
+    // `deny_unknown_fields` surfaces the offending key in the parse
+    // error, so the message names `api_key` even though we don't echo
+    // the value.
+    assert!(
+        merged.contains("api_key"),
+        "expected parse error to mention `api_key`: {merged}"
+    );
 }
 
 // ----------------- config path -----------------
@@ -394,12 +352,11 @@ fn template_writes_commented_scaffold_to_xdg_default() {
         .join("ferro-protect")
         .join("config.toml");
     let body = fs::read_to_string(&path).expect("file exists");
-    // Every recognised field appears, commented out.
+    // Every settable field appears, commented out.
     for key in [
         "host",
         "base_url",
         "api_key_file",
-        "api_key",
         "insecure",
         "json",
         "log_level",
@@ -407,6 +364,12 @@ fn template_writes_commented_scaffold_to_xdg_default() {
         let needle = format!("# {key} =");
         assert!(body.contains(&needle), "missing `{needle}` in: {body}");
     }
+    // `api_key` is a `show`-only row -- it must not appear as a
+    // file field so users don't paste a key into the TOML.
+    assert!(
+        !body.contains("# api_key ="),
+        "scaffold should not include `api_key`: {body}"
+    );
 }
 
 #[test]

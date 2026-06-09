@@ -23,7 +23,7 @@ log = "0.4"
 env_logger = "0.11"
 bytes = "1"
 url = "2"
-secrecy = { version = "0.10", features = ["serde"] }
+secrecy = "0.10"
 futures-util = "0.3"
 futures-core = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
