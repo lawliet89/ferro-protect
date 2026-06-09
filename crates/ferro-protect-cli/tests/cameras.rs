@@ -118,8 +118,11 @@ async fn cameras_snapshot_writes_to_out_path() {
         .mount(&server)
         .await;
 
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    let out_path = tmp.path().to_path_buf();
+    // `TempDir` + a non-existent path inside it: `NamedTempFile`
+    // opens the path exclusively on Windows, which would block the
+    // CLI from creating/truncating it.
+    let tmp_dir = tempfile::TempDir::new().expect("tempdir");
+    let out_path = tmp_dir.path().join("snapshot.jpg");
     let base_url = server.uri();
     let out_arg = out_path.display().to_string();
     let assert = tokio::task::spawn_blocking(move || {
@@ -134,6 +137,7 @@ async fn cameras_snapshot_writes_to_out_path() {
     assert.success();
     let written = std::fs::read(&out_path).expect("read snapshot tempfile");
     assert_eq!(written, FIXTURE_JPEG, "snapshot bytes round-trip to --out");
+    drop(tmp_dir);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -205,8 +209,8 @@ async fn cameras_snapshot_forwards_channel_and_high_quality_flags() {
         .mount(&server)
         .await;
 
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    let out_path = tmp.path().to_path_buf();
+    let tmp_dir = tempfile::TempDir::new().expect("tempdir");
+    let out_path = tmp_dir.path().join("snapshot.jpg");
     let base_url = server.uri();
     let out_arg = out_path.display().to_string();
     let assert = tokio::task::spawn_blocking(move || {
@@ -231,6 +235,7 @@ async fn cameras_snapshot_forwards_channel_and_high_quality_flags() {
     // mount-time `.verify()` on drop if the CLI did not send the
     // expected query string. `.success()` here is enough.
     assert.success();
+    drop(tmp_dir);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

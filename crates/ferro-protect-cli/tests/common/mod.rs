@@ -13,13 +13,16 @@
 //! The most important helpers are [`isolated_cmd`] and
 //! [`cmd_with_tempdir_home`]: they build a `Command` pointing at the
 //! freshly built `ferro-protect` binary with **every** `UNIFI_PROTECT_*`
-//! env var scrubbed and `HOME` / `XDG_CONFIG_HOME` set to either a
-//! sentinel path or a per-test temp directory.
+//! env var scrubbed, `XDG_CONFIG_HOME` scrubbed (so it can't override
+//! `HOME`-based XDG resolution), and `HOME` (plus `APPDATA` /
+//! `LOCALAPPDATA` for Windows) pointed at either a sentinel path or a
+//! per-test temp directory.
 //!
 //! Without isolation, a developer who has previously run
-//! `ferro-protect config init` would have their personal config silently
-//! picked up by assert_cmd-driven tests that don't pass `--config`,
-//! producing test failures that depend on the developer's machine.
+//! `ferro-protect config template` (and hand-edited the result) would
+//! have their personal config silently picked up by assert_cmd-driven
+//! tests that don't pass `--config`, producing test failures that
+//! depend on the developer's machine.
 
 use std::path::Path;
 
@@ -74,8 +77,8 @@ pub fn isolated_cmd() -> Command {
 /// Like `isolated_cmd` but `HOME` is a fresh temp directory. Use for
 /// tests that need XDG discovery to resolve to a real on-disk path
 /// (e.g. asserting `config path` returns the XDG fallback, or that
-/// `config edit` creates the XDG default on first use). The caller
-/// keeps the `TempDir` alive for the duration of the test.
+/// `config template` creates the XDG default on first use). The
+/// caller keeps the `TempDir` alive for the duration of the test.
 pub fn cmd_with_tempdir_home() -> (TempDir, Command) {
     let dir = TempDir::new().expect("tempdir");
     let mut c = Command::cargo_bin("ferro-protect").expect("binary built");

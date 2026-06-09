@@ -186,8 +186,13 @@ impl ConfigFile {
         {
             return Err(ConfigError::EmptyValue { field: "base_url" });
         }
+        // TOML strings are always UTF-8, so any `PathBuf` deserialized
+        // from the config file round-trips through `to_str()`. Treat
+        // whitespace-only the same as empty -- it can't be a real path
+        // and would otherwise fail later at `read_to_string` with a
+        // less actionable message.
         if let Some(p) = self.api_key_file.as_deref()
-            && p.as_os_str().is_empty()
+            && p.to_str().is_some_and(|s| s.trim().is_empty())
         {
             return Err(ConfigError::EmptyValue {
                 field: "api_key_file",
@@ -580,8 +585,12 @@ where
             });
         }
     }
+    // Trim file values too so a stray space or newline in
+    // `host = "nvr.local\n"` doesn't slip into URLs. `ConfigFile::validate`
+    // already rejects whitespace-only string fields, so anything reaching
+    // this branch is non-empty after trimming.
     file.map(|v| Resolved {
-        value: v.to_owned(),
+        value: v.trim().to_owned(),
         source: FieldSource::ConfigFile,
     })
 }
@@ -761,6 +770,13 @@ mod tests {
             (
                 ConfigFile {
                     api_key_file: Some(PathBuf::new()),
+                    ..Default::default()
+                },
+                "api_key_file",
+            ),
+            (
+                ConfigFile {
+                    api_key_file: Some(PathBuf::from("   ")),
                     ..Default::default()
                 },
                 "api_key_file",
