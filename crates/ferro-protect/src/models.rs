@@ -50,11 +50,12 @@ pub struct SnapshotOptions {
 pub struct TalkbackSession {
     /// Audio bits per sample (typically 16).
     pub bits_per_sample: NonZeroU64,
-    /// Audio codec identifier (e.g. `"aac"`).
+    /// Audio codec identifier (e.g. `"opus"` or `"aac"`).
     pub codec: String,
-    /// Audio sampling rate in Hz (typically 16000 or 22050).
+    /// Audio sampling rate in Hz (e.g. 24000 or 22050).
     pub sampling_rate: NonZeroU64,
-    /// WebSocket URL the client opens to push talkback audio into.
+    /// RTP stream URL the client pushes talkback audio to, of the form
+    /// `rtp://{host}:{port}` (per the spec's `talkbackStreamUrl`).
     pub url: String,
 }
 

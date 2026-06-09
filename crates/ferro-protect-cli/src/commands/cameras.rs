@@ -24,9 +24,9 @@ pub enum Action {
         /// Camera ID.
         id: String,
     },
-    /// Allocate a talkback WebSocket session for a camera. The
-    /// server returns the WS URL to push audio into plus the audio
-    /// codec/sample-rate config the camera expects.
+    /// Allocate a talkback session for a camera. The server returns
+    /// the RTP stream URL (rtp://host:port) to push audio into plus
+    /// the audio codec/sample-rate config the camera expects.
     Talkback {
         /// Camera ID.
         id: String,

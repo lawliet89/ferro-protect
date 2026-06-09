@@ -401,11 +401,12 @@ async fn rtsps_stream_retries_on_429() {
 #[tokio::test]
 async fn talkback_session_posts_empty_body_and_maps_response() {
     // `body_bytes(b"")` is the load-bearing assertion: it pins
-    // `post_empty_json`'s no-body contract. A regression to
-    // `post_json(&())` would emit a 4-byte `null` body with a JSON
-    // content-type and would fail this matcher (mirroring what the
-    // real talkback endpoint does — it rejects `null` request
-    // bodies).
+    // `post_empty_json_idempotent`'s no-body contract. A regression to
+    // a body-carrying `post(&())` would emit a 4-byte `null` body with
+    // a JSON content-type and would fail this matcher (mirroring what
+    // the real talkback endpoint does — it rejects `null` request
+    // bodies). The response fixture uses the spec's documented shape:
+    // an `rtp://` stream URL, opus codec, 24kHz sample rate.
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/cameras/abc/talkback-session"))
@@ -414,7 +415,7 @@ async fn talkback_session_posts_empty_body_and_maps_response() {
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_string(
-                    r#"{"bitsPerSample":16,"codec":"aac","samplingRate":16000,"url":"wss://nvr/talkback/abc"}"#,
+                    r#"{"bitsPerSample":16,"codec":"opus","samplingRate":24000,"url":"rtp://192.168.1.123:7004"}"#,
                 )
                 .insert_header("content-type", "application/json"),
         )
@@ -430,7 +431,7 @@ async fn talkback_session_posts_empty_body_and_maps_response() {
         .await
         .expect("talkback_session call succeeds");
     assert_eq!(session.bits_per_sample, NonZeroU64::new(16).unwrap());
-    assert_eq!(session.codec, "aac");
-    assert_eq!(session.sampling_rate, NonZeroU64::new(16000).unwrap());
-    assert_eq!(session.url, "wss://nvr/talkback/abc");
+    assert_eq!(session.codec, "opus");
+    assert_eq!(session.sampling_rate, NonZeroU64::new(24000).unwrap());
+    assert_eq!(session.url, "rtp://192.168.1.123:7004");
 }

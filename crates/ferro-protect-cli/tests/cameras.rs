@@ -315,7 +315,7 @@ async fn cameras_talkback_json_uses_camel_case_field_names() {
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_string(
-                    r#"{"bitsPerSample":16,"codec":"aac","samplingRate":16000,"url":"wss://nvr/talkback/abc"}"#,
+                    r#"{"bitsPerSample":16,"codec":"opus","samplingRate":24000,"url":"rtp://192.168.1.123:7004"}"#,
                 )
                 .insert_header("content-type", "application/json"),
         )
@@ -335,9 +335,9 @@ async fn cameras_talkback_json_uses_camel_case_field_names() {
     let json: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}; raw:\n{stdout}"));
     assert_eq!(json["bitsPerSample"], 16);
-    assert_eq!(json["codec"], "aac");
-    assert_eq!(json["samplingRate"], 16000);
-    assert_eq!(json["url"], "wss://nvr/talkback/abc");
+    assert_eq!(json["codec"], "opus");
+    assert_eq!(json["samplingRate"], 24000);
+    assert_eq!(json["url"], "rtp://192.168.1.123:7004");
     // Catch accidental snake_case fallthrough — if the
     // `#[serde(rename_all = "camelCase")]` were dropped, both
     // names would appear in successive runs depending on field
@@ -357,17 +357,17 @@ async fn cameras_talkback_json_uses_camel_case_field_names() {
 async fn cameras_talkback_renders_session_details() {
     let server = MockServer::start().await;
     // `body_bytes(b"")` is the load-bearing assertion of this test:
-    // `post_empty_json` must send no body. A regression to
-    // `post_json(&())` would emit a 4-byte `null` payload with a JSON
-    // content-type and would fail this matcher — and the real
-    // talkback endpoint, which rejects `null` request bodies.
+    // `post_empty_json_idempotent` must send no body. A regression to
+    // a body-carrying `post(&())` would emit a 4-byte `null` payload
+    // with a JSON content-type and would fail this matcher — and the
+    // real talkback endpoint, which rejects `null` request bodies.
     Mock::given(method("POST"))
         .and(path("/v1/cameras/abc/talkback-session"))
         .and(body_bytes(b"".as_slice()))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_string(
-                    r#"{"bitsPerSample":16,"codec":"aac","samplingRate":16000,"url":"wss://nvr/talkback/abc"}"#,
+                    r#"{"bitsPerSample":16,"codec":"opus","samplingRate":24000,"url":"rtp://192.168.1.123:7004"}"#,
                 )
                 .insert_header("content-type", "application/json"),
         )
@@ -383,7 +383,7 @@ async fn cameras_talkback_renders_session_details() {
 
     assert
         .success()
-        .stdout(predicate::str::contains("wss://nvr/talkback/abc"))
-        .stdout(predicate::str::contains("aac"))
-        .stdout(predicate::str::contains("16000"));
+        .stdout(predicate::str::contains("rtp://192.168.1.123:7004"))
+        .stdout(predicate::str::contains("opus"))
+        .stdout(predicate::str::contains("24000"));
 }

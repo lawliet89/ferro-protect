@@ -443,9 +443,12 @@ async fn live_read_cameras_talkback_session() {
         .talkback_session(&first.id)
         .await
         .expect("talkback_session call succeeded");
+    // The spec documents this as an RTP stream URL
+    // (`rtp://{host}:{port}`), not a WebSocket URL — confirmed against
+    // a live NVR returning `rtp://...`.
     assert!(
-        session.url.starts_with("ws://") || session.url.starts_with("wss://"),
-        "expected WebSocket URL scheme, got {}",
+        session.url.starts_with("rtp://"),
+        "expected rtp:// talkback URL, got {}",
         session.url
     );
     assert!(!session.codec.is_empty(), "empty codec id");

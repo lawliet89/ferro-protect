@@ -131,9 +131,9 @@ impl<'a> CamerasApi<'a> {
         Ok(streams)
     }
 
-    /// `POST /v1/cameras/{id}/talkback-session`. Allocate a
-    /// talkback WebSocket URL and return the audio config the
-    /// caller will need to encode the stream.
+    /// `POST /v1/cameras/{id}/talkback-session`. Allocate a talkback
+    /// RTP stream URL (`rtp://{host}:{port}`) and return the audio
+    /// config the caller will need to encode the stream.
     ///
     /// HTTP verb is POST per the spec (no request body; server
     /// allocates session credentials), but no persistent NVR state
