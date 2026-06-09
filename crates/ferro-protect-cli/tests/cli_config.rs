@@ -43,57 +43,27 @@ fn show_prints_full_table_with_field_and_value() {
     assert!(stdout.contains("nvr.local"), "stdout = {stdout}");
     assert!(stdout.contains("insecure"), "stdout = {stdout}");
     assert!(stdout.contains("true"), "stdout = {stdout}");
-    // Spike: source column dropped, so the header is just FIELD/VALUE.
+    // Source column dropped: header is FIELD / VALUE.
     assert!(
         !stdout.contains("SOURCE"),
-        "SOURCE column should be gone in the no-attribution spike: {stdout}"
+        "SOURCE column should be gone: {stdout}"
     );
-    // api_key is never printed -- always masked.
+    // `api_key` is not a row -- the runtime resolves the key, show
+    // doesn't shadow it. `api_key_file` is still shown.
+    assert!(stdout.contains("api_key_file"), "stdout = {stdout}");
     assert!(
-        !stdout.contains("/tmp/some-key") || stdout.contains("api_key_file"),
-        "api_key_file path is fine; raw key never; stdout = {stdout}"
-    );
-    assert!(
-        stdout.contains("<unset>"),
-        "api_key should be <unset>; stdout = {stdout}"
+        !stdout
+            .lines()
+            .any(|l| l.split_whitespace().next() == Some("api_key")),
+        "api_key should not appear as a row: {stdout}"
     );
 }
 
+/// `config show --json` emits a JSON array of `{field, value}`
+/// objects. There is no `--json` single-key form: callers `jq` the
+/// array.
 #[test]
-fn show_single_key_prints_bare_value() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), SAMPLE).expect("write");
-
-    let out = cmd
-        .args([
-            "--config",
-            cfg.path().to_str().unwrap(),
-            "config",
-            "show",
-            "host",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert_eq!(stdout.trim_end(), "nvr.local");
-}
-
-#[test]
-fn show_unknown_key_errors_and_lists_valid_keys() {
-    let mut cmd = common::isolated_cmd();
-    cmd.args(["config", "show", "bogus"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unknown config field"))
-        .stderr(predicate::str::contains("host"))
-        .stderr(predicate::str::contains("log_level"));
-}
-
-#[test]
-fn show_json_full_emits_array_of_rows() {
+fn show_json_emits_array_of_rows() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), SAMPLE).expect("write");
@@ -110,43 +80,20 @@ fn show_json_full_emits_array_of_rows() {
         .success()
         .get_output()
         .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
-    let arr = parsed.as_array().expect("array");
-    assert!(arr.iter().any(|row| row["field"] == "host"));
-    assert!(arr.iter().any(|row| row["field"] == "api_key"));
-    // api_key value must be the literal "<set>" or "<unset>", never a real key.
-    for row in arr {
-        if row["field"] == "api_key" {
-            let v = row["value"].as_str().unwrap();
-            assert!(v == "<set>" || v == "<unset>", "got {v}");
-        }
-    }
-}
-
-#[test]
-fn show_json_single_key_emits_value_object() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), SAMPLE).expect("write");
-
-    let out = cmd
-        .args([
-            "--config",
-            cfg.path().to_str().unwrap(),
-            "--json=true",
-            "config",
-            "show",
-            "host",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert_eq!(parsed["value"], "nvr.local");
-    // Spike: no `source` key in the single-row JSON.
-    assert!(parsed.get("source").is_none(), "got: {parsed}");
+    let arr: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.stdout).expect("valid json array");
+    let host_row = arr
+        .iter()
+        .find(|row| row["field"] == "host")
+        .expect("host row");
+    assert_eq!(host_row["value"], "nvr.local");
+    // `api_key` is not a row -- runtime resolves the key, `config
+    // show` doesn't shadow it.
+    assert!(
+        !arr.iter().any(|row| row["field"] == "api_key"),
+        "api_key should not appear as a row: {arr:?}"
+    );
+    assert!(arr.iter().any(|row| row["field"] == "api_key_file"));
 }
 
 /// Inline `api_key = "..."` in the config file was removed: a
@@ -272,6 +219,17 @@ fn path_json_emits_path_when_file_exists() {
 
 // ----------------- file discovery -----------------
 
+/// Parse `config show --json` output and return the value for `field`.
+fn show_value(stdout: &[u8], field: &str) -> String {
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(stdout).expect("valid json array");
+    arr.iter()
+        .find(|row| row["field"] == field)
+        .unwrap_or_else(|| panic!("no row for `{field}` in {arr:?}"))["value"]
+        .as_str()
+        .expect("value is a string")
+        .to_owned()
+}
+
 #[test]
 fn env_var_picks_config_file_when_no_flag() {
     let mut cmd = common::isolated_cmd();
@@ -279,13 +237,12 @@ fn env_var_picks_config_file_when_no_flag() {
     fs::write(cfg.path(), SAMPLE).expect("write");
     let out = cmd
         .env("UNIFI_PROTECT_CONFIG_FILE", cfg.path())
-        .args(["config", "show", "host"])
+        .args(["--json=true", "config", "show"])
         .assert()
         .success()
         .get_output()
         .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert_eq!(stdout.trim_end(), "nvr.local");
+    assert_eq!(show_value(&out.stdout, "host"), "nvr.local");
 }
 
 #[test]
@@ -300,16 +257,15 @@ fn flag_wins_over_env_for_config_file_discovery() {
         .args([
             "--config",
             flag_cfg.path().to_str().unwrap(),
+            "--json=true",
             "config",
             "show",
-            "host",
         ])
         .assert()
         .success()
         .get_output()
         .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert_eq!(stdout.trim_end(), "flag-host");
+    assert_eq!(show_value(&out.stdout, "host"), "flag-host");
 }
 
 #[test]
@@ -520,19 +476,15 @@ fn load_expands_tilde_in_api_key_file_so_runtime_can_read_it() {
     .expect("write");
 
     let out = cmd
-        .args(["config", "show", "api_key_file"])
+        .args(["--json=true", "config", "show"])
         .assert()
         .success()
         .get_output()
         .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
     let expected = home.path().join("keys").join("protect");
-    assert_eq!(
-        stdout.trim_end(),
-        expected.display().to_string(),
-        "tilde was not expanded by the loader",
-    );
-    assert!(!stdout.contains('~'), "tilde leaked through: {stdout}");
+    let got = show_value(&out.stdout, "api_key_file");
+    assert_eq!(got, expected.display().to_string(), "tilde not expanded");
+    assert!(!got.contains('~'), "tilde leaked through: {got}");
 }
 
 // ----------------- precedence + cross-source mutual exclusion -----------------
@@ -542,31 +494,26 @@ fn precedence_env_wins_over_file_in_show() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), "host = \"file-host\"\n").expect("write");
-    // `config show` ignores per-invocation overrides by design
-    // (see commands/config.rs::show), so the env var should win.
     let out = cmd
         .env("UNIFI_PROTECT_HOST", "env-host")
         .args([
             "--config",
             cfg.path().to_str().unwrap(),
+            "--json=true",
             "config",
             "show",
-            "host",
         ])
         .assert()
         .success()
         .get_output()
         .clone();
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert_eq!(stdout.trim_end(), "env-host");
+    assert_eq!(show_value(&out.stdout, "host"), "env-host");
 }
 
-/// `config show api_key_file` reflects `UNIFI_PROTECT_API_KEY_FILE`
-/// when it's set, not the lower-priority file path. The runtime
-/// API-key resolver prefers the env var over the file's
-/// `api_key_file`, so showing the file value would be a stale path.
-/// Without source attribution there's no row to mis-attribute, but
-/// the *value* still has to be the env-precedence winner.
+/// `config show` reflects `UNIFI_PROTECT_API_KEY_FILE` when it's set,
+/// not the lower-priority file path. The runtime API-key resolver
+/// prefers the env var over the file's `api_key_file`, so showing the
+/// file value would be a stale path.
 #[test]
 fn show_api_key_file_reflects_env_override() {
     let mut cmd = common::isolated_cmd();
@@ -584,14 +531,12 @@ fn show_api_key_file_reflects_env_override() {
             "--json=true",
             "config",
             "show",
-            "api_key_file",
         ])
         .assert()
         .success()
         .get_output()
         .clone();
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert_eq!(parsed["value"], "/env/path");
+    assert_eq!(show_value(&out.stdout, "api_key_file"), "/env/path");
 }
 
 /// `config show` reports `log_level = warn` (the runtime default)
@@ -608,14 +553,12 @@ fn show_log_level_defaults_to_warn() {
             "--json=true",
             "config",
             "show",
-            "log_level",
         ])
         .assert()
         .success()
         .get_output()
         .clone();
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert_eq!(parsed["value"], "warn");
+    assert_eq!(show_value(&out.stdout, "log_level"), "warn");
 }
 
 /// Cross-source mutual exclusion: setting `host` in the file and
@@ -635,7 +578,7 @@ fn host_in_file_plus_base_url_flag_is_rejected() {
     ])
     .assert()
     .failure()
-    .stderr(predicate::str::contains("cannot both be set"));
+    .stderr(predicate::str::contains("cannot set both"));
 }
 
 #[test]

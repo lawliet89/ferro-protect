@@ -7,11 +7,12 @@
 //!   listing every recognised field.
 //!
 //! The richer surface that earlier revisions of this PR carried
-//! (interactive wizard, `edit`, `delete`, `list`) was deliberately
-//! removed: users hand-edit a TOML file with their preferred editor,
-//! and `template` gives them the schema to start from. This kept the
-//! secret-handling surface (hidden-input pasting, key-file writing,
-//! per-field parsing, backup logic) out of the CLI.
+//! (interactive wizard, `edit`, `delete`, `list`, `show KEY`,
+//! per-field source attribution, an `api_key` masked row) was
+//! deliberately removed: users hand-edit a TOML file with their
+//! preferred editor, scripts that need a single value can `jq` the
+//! `--json` array, and the API key's source is reported via runtime
+//! "no API key provided" errors instead of a separate show path.
 
 use std::fs;
 use std::io::{self, Write};
@@ -22,10 +23,7 @@ use clap::Subcommand;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::api_key::{self, ApiKeySource};
-use crate::config::{
-    self, FIELDS, Flags, LoadedConfig, Resolved, ResolvedConfig, is_known_key, known_keys_joined,
-};
+use crate::config::{self, EffectiveConfig, FIELDS, Flags};
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
@@ -42,13 +40,9 @@ pub enum Action {
     /// `UNIFI_PROTECT_LOG` / `RUST_LOG` further filter the runtime
     /// logger (env_logger syntax) and are not shown here.
     ///
-    /// Pass a single KEY to print only that field's value (scriptable).
-    /// `--json` switches to a structured `{value}` form.
-    Show {
-        /// Print only this single field's value. Without a key, the
-        /// full table is printed.
-        key: Option<String>,
-    },
+    /// `--json` emits the same fields as a JSON array — pipe through
+    /// `jq` for scripting.
+    Show,
     /// Print the resolved config file path on a single line. Useful in
     /// shell scripts (`$(ferro-protect config path)`). `--json` emits
     /// `{"path": "..."}`. Errors when the file is missing.
@@ -79,8 +73,6 @@ pub enum ConfigCmdError {
         #[source]
         source: io::Error,
     },
-    #[error("unknown config field `{key}`\nvalid fields: {valid}")]
-    UnknownKey { key: String, valid: String },
     #[error(
         "no config file at {}\n\
          Run `ferro-protect config template` to create one, or point\n\
@@ -92,22 +84,15 @@ pub enum ConfigCmdError {
     Other(#[from] anyhow::Error),
 }
 
-fn unknown_key(key: &str) -> ConfigCmdError {
-    ConfigCmdError::UnknownKey {
-        key: key.to_owned(),
-        valid: known_keys_joined(),
-    }
-}
-
 /// Entry point for the `config` subcommand. Dispatches on [`Action`].
 ///
 /// # Errors
 /// Any [`ConfigCmdError`] returned by the action handler — see each
 /// action function's docs for the specific failure modes.
-pub fn run(action: Action, config_flag: Option<&Path>, json: bool) -> Result<(), ConfigCmdError> {
+pub fn run(action: &Action, config_flag: Option<&Path>, json: bool) -> Result<(), ConfigCmdError> {
     let env = |k: &str| std::env::var(k).ok();
-    match action {
-        Action::Show { key } => show(config_flag, &env, key.as_deref(), json),
+    match *action {
+        Action::Show => show(config_flag, &env, json),
         Action::Path => path(config_flag, &env, json),
         Action::Template { stdout, force } => template(config_flag, &env, stdout, force),
     }
@@ -117,22 +102,10 @@ pub fn run(action: Action, config_flag: Option<&Path>, json: bool) -> Result<(),
 // config show
 // --------------------------------------------------------------------
 
-fn show<E>(
-    config_flag: Option<&Path>,
-    env: &E,
-    key: Option<&str>,
-    json: bool,
-) -> Result<(), ConfigCmdError>
+fn show<E>(config_flag: Option<&Path>, env: &E, json: bool) -> Result<(), ConfigCmdError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
-    // Validate the user-supplied key (input error) before touching the
-    // file (state error) -- input errors shouldn't depend on file state.
-    if let Some(k) = key
-        && !is_known_key(k)
-    {
-        return Err(unknown_key(k));
-    }
     // `show` is a config-file inspection tool, so a missing file is an
     // error rather than a silent fallback to defaults. The explicit
     // `--config` / `UNIFI_PROTECT_CONFIG_FILE` cases already error
@@ -144,58 +117,27 @@ where
     };
     // `Flags::default()` — `show` only reflects what the loader sees
     // *outside* of any per-invocation flags besides --config. Per-flag
-    // overrides are an inherently per-invocation thing; reflecting them
-    // would mean `config show --insecure` claims insecure=Flag, which
-    // is true for that invocation only and misleading as "the
-    // effective config".
+    // overrides are inherently per-invocation; reflecting them would
+    // mean `config show --insecure` claims `true` for *this* run when
+    // it isn't the persisted state.
     let resolved = config::resolve(&Flags::default(), Some(&loaded), env)?;
-    // `flag_file: None` -- `config show` deliberately ignores
-    // per-invocation flags besides `--config`. We never want
-    // `--config` (a *config* file path) to be mistaken for
-    // `--api-key-file`.
-    let api_key = resolve_api_key_source_only(None, Some(&loaded), env);
-
-    key.map_or_else(
-        || show_all(&resolved, api_key, json),
-        |k| show_one(&resolved, api_key, k, json),
-    )
-}
-
-/// Dry-run of `api_key::resolve`: identifies which source *would*
-/// supply the key, without actually reading the file. We deliberately
-/// don't read the key file in `config show` — the value is masked
-/// anyway, and reading it would leak the warning sidechannel
-/// (lax-permissions warning) into normal show output.
-fn resolve_api_key_source_only<E>(
-    flag_file: Option<&Path>,
-    file: Option<&LoadedConfig>,
-    env: &E,
-) -> Option<ApiKeySource>
-where
-    E: Fn(&str) -> Option<String> + ?Sized,
-{
-    if flag_file.is_some() {
-        return Some(ApiKeySource::Flag);
+    let rows = collect_rows(&resolved);
+    let stdout = io::stdout();
+    let mut lock = stdout.lock();
+    if json {
+        serde_json::to_writer_pretty(&mut lock, &rows)
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
+        lock.write_all(b"\n")
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
+    } else {
+        let table_rows: Vec<Vec<String>> = rows
+            .iter()
+            .map(|r| vec![r.field.to_owned(), r.value.clone()])
+            .collect();
+        lock.write_all(crate::output::table(&["FIELD", "VALUE"], &table_rows).as_bytes())
+            .map_err(|e| ConfigCmdError::Other(e.into()))?;
     }
-    // Mirror the empty-env-falls-through rule from `api_key::resolve`
-    // (and `config::resolve_string`): `UNIFI_PROTECT_API_KEY_FILE=""`
-    // is treated as "not set" so we don't falsely report `<set>` from
-    // an env var that would otherwise blow up at runtime.
-    if let Some(path) = env(api_key::ENV_KEY_FILE)
-        && !path.trim().is_empty()
-    {
-        return Some(ApiKeySource::EnvFile);
-    }
-    if let Some(raw) = env(api_key::ENV_KEY)
-        && !raw.trim().is_empty()
-    {
-        return Some(ApiKeySource::EnvRaw);
-    }
-    let cf = file.map(|lc| &lc.file)?;
-    if cf.api_key_file.is_some() {
-        return Some(ApiKeySource::ConfigFile);
-    }
-    None
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -204,109 +146,39 @@ struct ShowRow {
     value: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ShowSingle {
-    value: String,
-}
-
-fn show_all(
-    resolved: &ResolvedConfig,
-    api_key: Option<ApiKeySource>,
-    json: bool,
-) -> Result<(), ConfigCmdError> {
-    let rows = collect_rows(resolved, api_key);
-
-    if json {
-        let stdout = io::stdout();
-        let mut lock = stdout.lock();
-        serde_json::to_writer_pretty(&mut lock, &rows)
-            .map_err(|e| ConfigCmdError::Other(e.into()))?;
-        lock.write_all(b"\n")
-            .map_err(|e| ConfigCmdError::Other(e.into()))?;
-        return Ok(());
+fn collect_rows(resolved: &EffectiveConfig) -> Vec<ShowRow> {
+    fn opt_string(v: Option<&String>) -> String {
+        v.map_or_else(|| "<unset>".to_owned(), Clone::clone)
     }
-
-    let table_rows: Vec<Vec<String>> = rows
-        .iter()
-        .map(|r| vec![r.field.to_owned(), r.value.clone()])
-        .collect();
-    let stdout = io::stdout();
-    let mut lock = stdout.lock();
-    lock.write_all(crate::output::table(&["FIELD", "VALUE"], &table_rows).as_bytes())
-        .map_err(|e| ConfigCmdError::Other(e.into()))?;
-    Ok(())
-}
-
-fn show_one(
-    resolved: &ResolvedConfig,
-    api_key: Option<ApiKeySource>,
-    key: &str,
-    json: bool,
-) -> Result<(), ConfigCmdError> {
-    if !is_known_key(key) {
-        return Err(unknown_key(key));
+    fn opt_path(v: Option<&PathBuf>) -> String {
+        v.map_or_else(|| "<unset>".to_owned(), |p| p.display().to_string())
     }
-    // `collect_rows` always emits a row for every known key (with
-    // `<unset>` when no source supplied a value), so `find` cannot
-    // miss for a key that passed `is_known_key`. The expect message
-    // is a guard against future drift between `FIELDS` and
-    // `collect_rows`.
-    let row = collect_rows(resolved, api_key)
-        .into_iter()
-        .find(|r| r.field == key)
-        .expect("collect_rows emits a row for every FIELDS key");
-    if json {
-        let single = ShowSingle { value: row.value };
-        let stdout = io::stdout();
-        let mut lock = stdout.lock();
-        serde_json::to_writer_pretty(&mut lock, &single)
-            .map_err(|e| ConfigCmdError::Other(e.into()))?;
-        lock.write_all(b"\n")
-            .map_err(|e| ConfigCmdError::Other(e.into()))?;
-    } else {
-        println!("{}", row.value);
-    }
-    Ok(())
-}
-
-fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec<ShowRow> {
     vec![
         ShowRow {
             field: "host",
-            value: render_opt(resolved.host.as_ref(), String::clone),
+            value: opt_string(resolved.host.as_ref()),
         },
         ShowRow {
             field: "base_url",
-            value: render_opt(resolved.base_url.as_ref(), String::clone),
+            value: opt_string(resolved.base_url.as_ref()),
         },
         ShowRow {
             field: "api_key_file",
-            value: render_opt(resolved.api_key_file.as_ref(), |p| p.display().to_string()),
-        },
-        ShowRow {
-            field: "api_key",
-            value: api_key.map_or_else(|| "<unset>".to_owned(), |_| "<set>".to_owned()),
+            value: opt_path(resolved.api_key_file.as_ref()),
         },
         ShowRow {
             field: "insecure",
-            value: resolved.insecure.value.to_string(),
+            value: resolved.insecure.to_string(),
         },
         ShowRow {
             field: "json",
-            value: resolved.json.value.to_string(),
+            value: resolved.json.to_string(),
         },
         ShowRow {
             field: "log_level",
-            value: resolved.log_level.value.to_string(),
+            value: resolved.log_level.to_string(),
         },
     ]
-}
-
-fn render_opt<T, F>(slot: Option<&Resolved<T>>, render: F) -> String
-where
-    F: FnOnce(&T) -> String,
-{
-    slot.map_or_else(|| "<unset>".to_owned(), |r| render(&r.value))
 }
 
 // --------------------------------------------------------------------
@@ -363,13 +235,6 @@ fn build_template() -> String {
          # resolved values.\n",
     );
     for f in FIELDS {
-        // Empty `example` marks fields that are addressable via
-        // `config show` but cannot be set in the file (currently just
-        // `api_key`). Rendering `# api_key = ` with no RHS would
-        // mislead users into pasting their key into the TOML.
-        if f.example.is_empty() {
-            continue;
-        }
         out.push('\n');
         for line in f.description.lines() {
             out.push_str("# ");
@@ -490,49 +355,25 @@ fn write_file_secure(path: &Path, contents: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FIELDS, FieldSource};
     use crate::logging::LogLevel;
 
-    /// Guard against drift between `FIELDS` (the single source of
-    /// truth for recognised fields) and `collect_rows` (which
-    /// hardcodes one row per field for `config show`). Adding to
-    /// `FIELDS` without updating `collect_rows` would silently omit
-    /// the new field from the table and trip `show_one`'s `expect`
-    /// for a single-key lookup; this test fails first.
+    /// `collect_rows` hardcodes one row per file-settable field and
+    /// must emit them in the order `FIELDS` declares. Drift between
+    /// the two tables would mean `config template` and `config show`
+    /// stop agreeing on what's in the config; this test fails first.
     #[test]
-    fn collect_rows_emits_one_row_per_fields_entry() {
-        let resolved = ResolvedConfig {
+    fn collect_rows_matches_fields_table() {
+        let resolved = EffectiveConfig {
             host: None,
             base_url: None,
             api_key_file: None,
-            insecure: Resolved {
-                value: false,
-                source: FieldSource::Default,
-            },
-            json: Resolved {
-                value: false,
-                source: FieldSource::Default,
-            },
-            log_level: Resolved {
-                value: LogLevel::Warn,
-                source: FieldSource::Default,
-            },
-            config_file_path: None,
+            insecure: false,
+            json: false,
+            log_level: LogLevel::Warn,
         };
-        let rows = collect_rows(&resolved, None);
-        assert_eq!(
-            rows.len(),
-            FIELDS.len(),
-            "collect_rows emits {} rows but FIELDS has {} entries",
-            rows.len(),
-            FIELDS.len(),
-        );
-        for f in FIELDS {
-            assert!(
-                rows.iter().any(|r| r.field == f.key),
-                "FIELDS contains `{}` but collect_rows doesn't emit a row for it",
-                f.key,
-            );
-        }
+        let rows = collect_rows(&resolved);
+        let row_keys: Vec<_> = rows.iter().map(|r| r.field).collect();
+        let field_keys: Vec<_> = FIELDS.iter().map(|f| f.key).collect();
+        assert_eq!(row_keys, field_keys, "collect_rows ↔ FIELDS drift");
     }
 }

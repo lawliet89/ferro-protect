@@ -191,7 +191,7 @@ async fn run(cli: Cli) -> Result<()> {
     // what it's *managing*), so flag-only init is correct here.
     if let Command::Config { action } = cli.command {
         logging::init(cli.log_level.map(Into::into), None);
-        return commands::config::run(action, cli.config.as_deref(), cli.json.unwrap_or(false))
+        return commands::config::run(&action, cli.config.as_deref(), cli.json.unwrap_or(false))
             .map_err(Into::into);
     }
 
@@ -232,20 +232,6 @@ async fn run(cli: Cli) -> Result<()> {
         cli.insecure,
     );
 
-    // Cross-source mutual exclusion: clap's `conflicts_with` only
-    // catches the `--host ... --base-url ...` case on argv. A user can
-    // still set `host` in the file and `--base-url` on the flag, or
-    // mix env + file. Reject any combination where both end up resolved.
-    if let (Some(h), Some(b)) = (resolved.host.as_ref(), resolved.base_url.as_ref()) {
-        return Err(anyhow!(
-            "`host` and `base_url` cannot both be set. \
-             host comes from {:?}, base_url from {:?}. \
-             Pick one source per option and clear the other.",
-            h.source,
-            b.source,
-        ));
-    }
-
     // Resolve the key in a sync block so the stderr lock guard (which
     // isn't Send) never lives across an .await point.
     let (key, _key_source) = {
@@ -261,20 +247,17 @@ async fn run(cli: Cli) -> Result<()> {
     log::debug!("api key resolved (source resolution complete)");
 
     let mut builder = ProtectClient::builder().api_key(key);
-    match (
-        resolved.base_url.as_ref().map(|r| r.value.as_str()),
-        resolved.host.as_ref().map(|r| r.value.as_str()),
-    ) {
+    match (resolved.base_url.as_deref(), resolved.host.as_deref()) {
         (Some(url), _) => builder = builder.base_url(url),
         (None, Some(host)) => builder = builder.host(host),
         (None, None) => return Err(anyhow!("one of --host or --base-url is required")),
     }
-    if resolved.insecure.value {
+    if resolved.insecure {
         builder = builder.tls(TlsMode::AcceptInvalid);
     }
     let client = builder.build().context("failed to construct client")?;
 
-    let json = resolved.json.value;
+    let json = resolved.json;
     match cli.command {
         Command::Info => {
             let info = client.info().await.context("info request failed")?;

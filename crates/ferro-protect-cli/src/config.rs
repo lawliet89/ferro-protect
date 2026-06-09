@@ -8,8 +8,9 @@
 //! - [`load`] — file-discovery precedence (`--config` flag >
 //!   `UNIFI_PROTECT_CONFIG_FILE` env > XDG default), parses + validates.
 //! - [`resolve`] — pure merger that turns ([`Flags`], optional
-//!   [`LoadedConfig`], env callback) into a [`ResolvedConfig`] with
-//!   per-field [`FieldSource`] attribution.
+//!   [`LoadedConfig`], env callback) into an [`EffectiveConfig`] of
+//!   plain values. Cross-source `host`/`base_url` mutual exclusion is
+//!   enforced here too, so callers don't have to repeat the check.
 //!
 //! API-key resolution lives in [`crate::api_key`]; this module just
 //! surfaces the file-derived sources to it via [`api_key::Sources`].
@@ -20,7 +21,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use serde::Serialize;
 use thiserror::Error;
 
 use crate::logging::LogLevel;
@@ -38,103 +38,55 @@ pub const ENV_CONFIG_FILE: &str = "UNIFI_PROTECT_CONFIG_FILE";
 /// * `config::resolve`'s env-var lookup
 /// * the "valid fields: …" help text in error messages
 ///
-/// `api_key` is addressable in `show` (rendered as `<set>`/`<unset>`)
-/// but is not settable in the config file -- the only sources are the
-/// `--api-key-file` flag, the two `UNIFI_PROTECT_API_KEY*` env vars,
-/// and the file's `api_key_file` pointer.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldMeta {
-    /// Field name as it appears in TOML and on the CLI.
+    /// Field name as it appears in TOML.
     pub key: &'static str,
     /// Human-readable purpose. One-liner; rendered as `# {description}`
     /// in the `config template` scaffold.
     pub description: &'static str,
     /// Example RHS for the `config template` scaffold. Include quotes
-    /// if the value is a string. The empty string is a marker meaning
-    /// "skip this field in the template" — used for show-only rows
-    /// (like `api_key`) that aren't settable in the file.
+    /// if the value is a string.
     pub example: &'static str,
-    /// Env var that `config::resolve` consults for this field, or `None`.
-    /// `None` for `api_key` (the secret-bearing raw-key env var
-    /// `UNIFI_PROTECT_API_KEY` is resolved in [`crate::api_key`]
-    /// alongside the file-reading branches) and `log_level` (the
-    /// env_logger filter syntax of `UNIFI_PROTECT_LOG`/`RUST_LOG`
-    /// can't reduce to a single `LogLevel`, so we keep that resolution
-    /// inside `logging::init`).
-    pub env_var: Option<&'static str>,
 }
 
-/// The canonical field table. Adding a new field starts here.
+/// Canonical scaffold table for `config template`.
+///
+/// The CLI only walks this table to render the commented-out file;
+/// resolution and `show` hand-name every field, so adding a key here
+/// without wiring it up elsewhere is harmless.
 pub const FIELDS: &[FieldMeta] = &[
     FieldMeta {
         key: "host",
         description: "NVR hostname or host:port. Mutually exclusive with `base_url`.",
         example: "\"nvr.local\"",
-        env_var: Some("UNIFI_PROTECT_HOST"),
     },
     FieldMeta {
         key: "base_url",
         description: "Override the entire base URL. Mutually exclusive with `host`.",
         example: "\"https://nvr.local/proxy/protect/integration\"",
-        env_var: Some("UNIFI_PROTECT_BASE_URL"),
     },
     FieldMeta {
         key: "api_key_file",
         description: "Path to a file containing the API key (preferred over inline).",
         example: "\"~/.config/ferro-protect/api_key\"",
-        env_var: Some(crate::api_key::ENV_KEY_FILE),
-    },
-    FieldMeta {
-        key: "api_key",
-        description: "API key (resolved from flag / env / `api_key_file`). Read-only here.",
-        // Empty `example` is the marker that the template scaffold uses
-        // to skip a field: `api_key` is a `show`-only row, not a file
-        // field, so emitting `# api_key = ...` would mislead users into
-        // pasting their key into the TOML.
-        example: "",
-        env_var: None,
     },
     FieldMeta {
         key: "insecure",
         description: "Skip TLS certificate validation (typical for self-signed NVRs).",
         example: "false",
-        env_var: Some("UNIFI_PROTECT_INSECURE"),
     },
     FieldMeta {
         key: "json",
         description: "Default to JSON output instead of human-readable text.",
         example: "false",
-        env_var: Some("UNIFI_PROTECT_JSON"),
     },
     FieldMeta {
         key: "log_level",
         description: "Log level: error | warn | info | debug | trace.",
         example: "\"warn\"",
-        env_var: None,
     },
 ];
-
-/// `true` when `key` matches an entry in [`FIELDS`].
-#[must_use]
-pub fn is_known_key(key: &str) -> bool {
-    FIELDS.iter().any(|f| f.key == key)
-}
-
-/// `"host, base_url, ..."` — used in error messages.
-#[must_use]
-pub fn known_keys_joined() -> String {
-    FIELDS.iter().map(|f| f.key).collect::<Vec<_>>().join(", ")
-}
-
-/// Env-var name for a known field, panicking on miss. Used by
-/// [`resolve`] where the key is hard-coded and known to be valid.
-fn env_var_for(key: &str) -> &'static str {
-    FIELDS
-        .iter()
-        .find(|f| f.key == key)
-        .and_then(|f| f.env_var)
-        .unwrap_or_else(|| panic!("BUG: no env var for field `{key}`"))
-}
 
 /// On-disk config schema. Every field is optional; `None` means "not
 /// set" (distinct from "set to the type default"), which lets us tell
@@ -445,133 +397,93 @@ pub struct Flags {
     pub log_level: Option<LogLevel>,
 }
 
-/// Which source provided the effective value for a given field.
-/// `Env(name)` carries the env var name so [`config show`] can attribute
-/// per-field (e.g. `from env: UNIFI_PROTECT_HOST`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", content = "name", rename_all = "snake_case")]
-pub enum FieldSource {
-    Flag,
-    Env(&'static str),
-    ConfigFile,
-    Default,
-}
-
-/// A field value paired with its source. Used by [`config show`].
-#[derive(Debug, Clone, Serialize)]
-pub struct Resolved<T> {
-    pub value: T,
-    pub source: FieldSource,
-}
-
-/// Effective config after merging flags, env, and file. For optional
-/// fields, `None` means "no source supplied a value" — printed as
-/// `<unset>` by `config show`.
+/// Effective config after merging flags, env, and file. Plain values:
+/// per-source attribution and the `Resolved<T>` wrapper were removed
+/// when `config show` stopped rendering the `SOURCE` column.
 #[derive(Debug)]
-pub struct ResolvedConfig {
-    pub host: Option<Resolved<String>>,
-    pub base_url: Option<Resolved<String>>,
-    pub api_key_file: Option<Resolved<PathBuf>>,
-    pub insecure: Resolved<bool>,
-    pub json: Resolved<bool>,
-    /// Always populated -- `FieldSource::Default` carries `LogLevel::Warn`
-    /// when no flag / file value was supplied. `UNIFI_PROTECT_LOG` and
-    /// `RUST_LOG` are *not* reflected here because their `env_logger`
-    /// filter syntax cannot be reduced to a single `LogLevel` variant;
-    /// they may still override this value at the live logger.
-    pub log_level: Resolved<LogLevel>,
-    /// The path of the file the values were merged from, if any. Used
-    /// for `ConfigFile` source attribution in `config show`.
-    pub config_file_path: Option<PathBuf>,
+pub struct EffectiveConfig {
+    pub host: Option<String>,
+    pub base_url: Option<String>,
+    pub api_key_file: Option<PathBuf>,
+    pub insecure: bool,
+    pub json: bool,
+    /// `UNIFI_PROTECT_LOG` and `RUST_LOG` are *not* folded in here —
+    /// their `env_logger` filter syntax cannot be reduced to a single
+    /// `LogLevel` variant. They may still override this value at the
+    /// live logger.
+    pub log_level: LogLevel,
 }
 
-/// Merge flags + env + file into a [`ResolvedConfig`].
+/// Merge flags + env + file into an [`EffectiveConfig`].
 ///
 /// API-key resolution is intentionally **not** done here; the API key
 /// has its own multi-source resolver in [`crate::api_key`] that takes a
 /// [`crate::api_key::Sources`] built from the same inputs.
 ///
 /// # Errors
-/// Returns [`ConfigError::BadEnvBool`] when a boolean env var
-/// (e.g. `UNIFI_PROTECT_INSECURE`, `UNIFI_PROTECT_JSON`) is set to a
-/// non-empty value that isn't a recognised boolish token. Falling
-/// through silently would mask misconfiguration.
+/// - [`ConfigError::BadEnvBool`] — a boolean env var
+///   (`UNIFI_PROTECT_INSECURE` / `UNIFI_PROTECT_JSON`) is set to a
+///   non-empty value that isn't a recognised boolish token.
+/// - [`ConfigError::HostAndBaseUrl`] — after merging across all
+///   sources, both `host` and `base_url` ended up set. Caught here
+///   (not just in [`ConfigFile::validate`]) because the file might
+///   have `host` while the flag carries `base_url`, etc.
 pub fn resolve<E>(
     flags: &Flags,
     file: Option<&LoadedConfig>,
     env: &E,
-) -> Result<ResolvedConfig, ConfigError>
+) -> Result<EffectiveConfig, ConfigError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     let cf = file.map(|lc| &lc.file);
     let host = resolve_string(
-        env_var_for("host"),
+        "UNIFI_PROTECT_HOST",
         flags.host.as_deref(),
         env,
         cf.and_then(|c| c.host.as_deref()),
     );
     let base_url = resolve_string(
-        env_var_for("base_url"),
+        "UNIFI_PROTECT_BASE_URL",
         flags.base_url.as_deref(),
         env,
         cf.and_then(|c| c.base_url.as_deref()),
     );
+    if host.is_some() && base_url.is_some() {
+        return Err(ConfigError::HostAndBaseUrl);
+    }
     let api_key_file = resolve_path_field(
-        env_var_for("api_key_file"),
+        crate::api_key::ENV_KEY_FILE,
         flags.api_key_file.as_deref(),
         env,
         cf.and_then(|c| c.api_key_file.as_deref()),
     );
     let insecure = resolve_bool(
-        env_var_for("insecure"),
+        "UNIFI_PROTECT_INSECURE",
         flags.insecure,
         env,
         cf.and_then(|c| c.insecure),
         false,
     )?;
     let json = resolve_bool(
-        env_var_for("json"),
+        "UNIFI_PROTECT_JSON",
         flags.json,
         env,
         cf.and_then(|c| c.json),
         false,
     )?;
-    // No env source for log_level on purpose: `--log-level` env handling
-    // lives in the logger init flow and uses the same
-    // `UNIFI_PROTECT_LOG` / `RUST_LOG` string-filter syntax as
-    // `env_logger`, which can't be reduced to a single `LogLevel`
-    // variant. `config show` reports the file attribution; whether the
-    // live logger is running with that value is a separate question.
-    #[expect(
-        clippy::option_if_let_else,
-        reason = "three-way precedence chain reads more clearly as if/else-if than nested map_or_else"
-    )]
-    let log_level = if let Some(v) = flags.log_level {
-        Resolved {
-            value: v,
-            source: FieldSource::Flag,
-        }
-    } else if let Some(v) = cf.and_then(|c| c.log_level) {
-        Resolved {
-            value: v,
-            source: FieldSource::ConfigFile,
-        }
-    } else {
-        Resolved {
-            value: LogLevel::Warn,
-            source: FieldSource::Default,
-        }
-    };
+    let log_level = flags
+        .log_level
+        .or_else(|| cf.and_then(|c| c.log_level))
+        .unwrap_or(LogLevel::Warn);
 
-    Ok(ResolvedConfig {
+    Ok(EffectiveConfig {
         host,
         base_url,
         api_key_file,
         insecure,
         json,
         log_level,
-        config_file_path: file.map(|lc| lc.path.clone()),
     })
 }
 
@@ -580,15 +492,12 @@ fn resolve_string<E>(
     flag: Option<&str>,
     env: &E,
     file: Option<&str>,
-) -> Option<Resolved<String>>
+) -> Option<String>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     if let Some(v) = flag {
-        return Some(Resolved {
-            value: v.to_owned(),
-            source: FieldSource::Flag,
-        });
+        return Some(v.to_owned());
     }
     // Trim before the emptiness check so `UNIFI_PROTECT_HOST="   "`
     // doesn't slip through as a valid host. Same rule the API-key env
@@ -598,20 +507,13 @@ where
     if let Some(v) = env(env_name) {
         let trimmed = v.trim();
         if !trimmed.is_empty() {
-            return Some(Resolved {
-                value: trimmed.to_owned(),
-                source: FieldSource::Env(env_name),
-            });
+            return Some(trimmed.to_owned());
         }
     }
-    // Trim file values too so a stray space or newline in
-    // `host = "nvr.local\n"` doesn't slip into URLs. `ConfigFile::validate`
-    // already rejects whitespace-only string fields, so anything reaching
-    // this branch is non-empty after trimming.
-    file.map(|v| Resolved {
-        value: v.trim().to_owned(),
-        source: FieldSource::ConfigFile,
-    })
+    // Trim file values too. `ConfigFile::validate` rejects
+    // whitespace-only strings, so anything here is non-empty after
+    // trimming.
+    file.map(|v| v.trim().to_owned())
 }
 
 fn resolve_path_field<E>(
@@ -619,35 +521,23 @@ fn resolve_path_field<E>(
     flag: Option<&Path>,
     env: &E,
     file: Option<&Path>,
-) -> Option<Resolved<PathBuf>>
+) -> Option<PathBuf>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     if let Some(p) = flag {
-        return Some(Resolved {
-            value: p.to_path_buf(),
-            source: FieldSource::Flag,
-        });
+        return Some(p.to_path_buf());
     }
-    // Mirror `resolve_string` / `api_key::resolve`: trim, treat empty as
-    // "not set" so a leftover `UNIFI_PROTECT_API_KEY_FILE=""` falls
-    // through instead of masking the file value. Tilde is *not* expanded
-    // here; the runtime `api_key::resolve` doesn't expand the env path
-    // either, so `config show` reflects what the runtime would actually
-    // open.
+    // Empty/whitespace env falls through. Tilde is *not* expanded on
+    // env paths; `api_key::resolve` doesn't expand them either, so
+    // what we return is what the runtime would open.
     if let Some(raw) = env(env_name) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
-            return Some(Resolved {
-                value: PathBuf::from(trimmed),
-                source: FieldSource::Env(env_name),
-            });
+            return Some(PathBuf::from(trimmed));
         }
     }
-    file.map(|p| Resolved {
-        value: p.to_path_buf(),
-        source: FieldSource::ConfigFile,
-    })
+    file.map(Path::to_path_buf)
 }
 
 fn resolve_bool<E>(
@@ -656,44 +546,27 @@ fn resolve_bool<E>(
     env: &E,
     file: Option<bool>,
     default: bool,
-) -> Result<Resolved<bool>, ConfigError>
+) -> Result<bool, ConfigError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
 {
     if let Some(v) = flag {
-        return Ok(Resolved {
-            value: v,
-            source: FieldSource::Flag,
-        });
+        return Ok(v);
     }
-    // Empty/whitespace env var falls through (consistent with
-    // `resolve_string` and `api_key::resolve`). A non-empty but
+    // Empty/whitespace env falls through. A non-empty but
     // unrecognised value is a hard error -- silently falling through
-    // would mask misconfiguration like `UNIFI_PROTECT_JSON=tru`. The
-    // TOML side is similarly strict (a non-bool there fails parsing).
+    // would mask misconfiguration like `UNIFI_PROTECT_JSON=tru`. TOML
+    // is similarly strict (a non-bool there fails parsing).
     if let Some(raw) = env(env_name) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
-            let parsed = parse_boolish(trimmed).ok_or_else(|| ConfigError::BadEnvBool {
+            return parse_boolish(trimmed).ok_or_else(|| ConfigError::BadEnvBool {
                 name: env_name,
                 value: raw.clone(),
-            })?;
-            return Ok(Resolved {
-                value: parsed,
-                source: FieldSource::Env(env_name),
             });
         }
     }
-    if let Some(v) = file {
-        return Ok(Resolved {
-            value: v,
-            source: FieldSource::ConfigFile,
-        });
-    }
-    Ok(Resolved {
-        value: default,
-        source: FieldSource::Default,
-    })
+    Ok(file.unwrap_or(default))
 }
 
 /// Same vocabulary as `clap::builder::BoolishValueParser`: accepts
@@ -798,65 +671,55 @@ mod tests {
         }
     }
 
+    fn loaded(file: ConfigFile) -> LoadedConfig {
+        LoadedConfig {
+            file,
+            path: PathBuf::from("/cfg"),
+            source: FileDiscoverySource::XdgDefault,
+        }
+    }
+
     #[test]
     fn resolve_flag_wins_over_env_and_file() {
         let flags = Flags {
             host: Some("from-flag".into()),
             ..Default::default()
         };
-        let lc = LoadedConfig {
-            file: ConfigFile {
-                host: Some("from-file".into()),
-                ..Default::default()
-            },
-            path: PathBuf::from("/cfg"),
-            source: FileDiscoverySource::Flag,
-        };
+        let lc = loaded(ConfigFile {
+            host: Some("from-file".into()),
+            ..Default::default()
+        });
         let env = env_from([("UNIFI_PROTECT_HOST", "from-env")]);
         let r = resolve(&flags, Some(&lc), &env).expect("resolve");
-        let h = r.host.unwrap();
-        assert_eq!(h.value, "from-flag");
-        assert_eq!(h.source, FieldSource::Flag);
+        assert_eq!(r.host.as_deref(), Some("from-flag"));
     }
 
     #[test]
     fn resolve_env_wins_over_file_when_no_flag() {
-        let lc = LoadedConfig {
-            file: ConfigFile {
-                host: Some("from-file".into()),
-                ..Default::default()
-            },
-            path: PathBuf::from("/cfg"),
-            source: FileDiscoverySource::XdgDefault,
-        };
+        let lc = loaded(ConfigFile {
+            host: Some("from-file".into()),
+            ..Default::default()
+        });
         let env = env_from([("UNIFI_PROTECT_HOST", "from-env")]);
         let r = resolve(&Flags::default(), Some(&lc), &env).expect("resolve");
-        let h = r.host.unwrap();
-        assert_eq!(h.value, "from-env");
-        assert_eq!(h.source, FieldSource::Env("UNIFI_PROTECT_HOST"));
+        assert_eq!(r.host.as_deref(), Some("from-env"));
     }
 
     #[test]
     fn resolve_file_wins_when_no_flag_or_env() {
-        let lc = LoadedConfig {
-            file: ConfigFile {
-                host: Some("from-file".into()),
-                ..Default::default()
-            },
-            path: PathBuf::from("/cfg"),
-            source: FileDiscoverySource::XdgDefault,
-        };
+        let lc = loaded(ConfigFile {
+            host: Some("from-file".into()),
+            ..Default::default()
+        });
         let r = resolve(&Flags::default(), Some(&lc), &empty_env()).expect("resolve");
-        let h = r.host.unwrap();
-        assert_eq!(h.value, "from-file");
-        assert_eq!(h.source, FieldSource::ConfigFile);
+        assert_eq!(r.host.as_deref(), Some("from-file"));
     }
 
     #[test]
     fn resolve_bool_default_when_unset() {
         let r = resolve(&Flags::default(), None, &empty_env()).expect("resolve");
-        assert!(!r.insecure.value);
-        assert_eq!(r.insecure.source, FieldSource::Default);
+        assert!(!r.insecure);
+        assert!(!r.json);
     }
 
     #[test]
@@ -878,56 +741,53 @@ mod tests {
         // an error, matching `resolve_string` / `api_key::resolve`.
         let env = env_from([("UNIFI_PROTECT_JSON", "   ")]);
         let r = resolve(&Flags::default(), None, &env).expect("resolve");
-        assert_eq!(r.json.source, FieldSource::Default);
+        assert!(!r.json);
     }
 
     #[test]
     fn resolve_empty_env_string_falls_through_to_file() {
-        let lc = LoadedConfig {
-            file: ConfigFile {
-                host: Some("from-file".into()),
-                ..Default::default()
-            },
-            path: PathBuf::from("/cfg"),
-            source: FileDiscoverySource::XdgDefault,
-        };
+        let lc = loaded(ConfigFile {
+            host: Some("from-file".into()),
+            ..Default::default()
+        });
         let env = env_from([("UNIFI_PROTECT_HOST", "")]);
         let r = resolve(&Flags::default(), Some(&lc), &env).expect("resolve");
-        // Empty env string is treated as "not set" so the file value
-        // wins. Matches the spirit of clap's behavior, where setting
-        // an env var to `""` typically means "don't override".
-        assert_eq!(r.host.unwrap().source, FieldSource::ConfigFile);
+        assert_eq!(r.host.as_deref(), Some("from-file"));
     }
 
     #[test]
     fn resolve_whitespace_only_env_string_falls_through_to_file() {
-        // Regression: `UNIFI_PROTECT_HOST="   "` used to slip past the
-        // `!v.is_empty()` check and override the file value. The trim
-        // rule keeps host/base_url URLs from getting accidentally
-        // populated with whitespace-only strings.
-        let lc = LoadedConfig {
-            file: ConfigFile {
-                host: Some("from-file".into()),
-                ..Default::default()
-            },
-            path: PathBuf::from("/cfg"),
-            source: FileDiscoverySource::XdgDefault,
-        };
+        let lc = loaded(ConfigFile {
+            host: Some("from-file".into()),
+            ..Default::default()
+        });
         let env = env_from([("UNIFI_PROTECT_HOST", "   \t\n")]);
         let r = resolve(&Flags::default(), Some(&lc), &env).expect("resolve");
-        assert_eq!(r.host.unwrap().source, FieldSource::ConfigFile);
+        assert_eq!(r.host.as_deref(), Some("from-file"));
     }
 
     #[test]
     fn resolve_env_string_is_trimmed_before_storing() {
-        // Trailing newlines/spaces (e.g. from a hand-edited `.env.local`
-        // or shells that quote values with whitespace) should not end
-        // up in the URL we hand to the HTTP client.
         let env = env_from([("UNIFI_PROTECT_HOST", "  nvr.local  \n")]);
         let r = resolve(&Flags::default(), None, &env).expect("resolve");
-        let h = r.host.unwrap();
-        assert_eq!(h.value, "nvr.local");
-        assert_eq!(h.source, FieldSource::Env("UNIFI_PROTECT_HOST"));
+        assert_eq!(r.host.as_deref(), Some("nvr.local"));
+    }
+
+    #[test]
+    fn resolve_rejects_cross_source_host_plus_base_url() {
+        // Regression: the file says `host = "..."`, the flag carries
+        // `--base-url`. `ConfigFile::validate` doesn't see flags, so
+        // the cross-source check has to live in `resolve`.
+        let lc = loaded(ConfigFile {
+            host: Some("from-file".into()),
+            ..Default::default()
+        });
+        let flags = Flags {
+            base_url: Some("https://from-flag/".into()),
+            ..Default::default()
+        };
+        let err = resolve(&flags, Some(&lc), &empty_env()).expect_err("rejects");
+        assert!(matches!(err, ConfigError::HostAndBaseUrl), "got {err:?}");
     }
 
     #[test]
