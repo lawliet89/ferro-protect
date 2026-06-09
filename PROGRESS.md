@@ -874,3 +874,63 @@ limiter shared across `http_read` / `http_write`.
 **Next**: Phase 4c (lights read endpoints) remains the next code
 work item. PR #6 still needs to land into `main`; this chore tightens
 the implementation that PR ships.
+
+## 2026-06-09 — Spec bump: 7.1.60 → 7.1.77
+
+**Status**: complete
+
+**Summary**:
+Updated the `third_party/unifi-apis` submodule from `b9b8488` to
+`cbd293d` (which carries the `7.1.77.json` spec) and bumped
+`SPEC_VERSION` in `crates/ferro-protect/build.rs` via
+`scripts/update-spec 7.1.77`. No new preprocessing rules, no wrapper
+changes, and no `models.rs` changes were needed — typify regenerated
+the new fields and event variant straight through the existing
+re-export seam. All four gates green (`build`, `test --all`,
+`clippy -D warnings`, `deny check`).
+
+**Spec delta (7.1.60 → 7.1.77)**:
+- No paths added or removed.
+- Six new component schemas, all sensor-related:
+  - `sensorVapeEvent` — a new `sensorVape` event type, added as a
+    variant to the `event` discriminated union (typify generates
+    `SensorVapeEvent` + a new `Event` enum arm).
+  - `glassBreakSettings` (`isEnabled` / `sensitivity` /
+    `sensitivityWhenArmed`) — new glass-break sensor config, attached
+    to `sensor`, `sensorPartialWithReference`, and the `deviceBulk*`
+    schemas.
+  - `sensorScheduleMode` (`always` | `when_armed`),
+    `sensorArmProfileIds`, `sensorHasCustomSensitivityWhenArmed` —
+    armed-mode detection scheduling knobs on the same sensor schemas.
+  - `fobButtonLabels` (`securityActions` | `positionHint`) — new
+    label-style enum on `fob` / `fobPartialWithReference` /
+    `deviceBulk*`.
+- Existing schemas reshaped: `motionSettings` gained
+  `sensitivityWhenArmed` (and now spells out `type`/`minimum`/`maximum`
+  on `sensitivity`); `armProfile.creator` went from a bare
+  `$ref: userId` to a nullable `oneOf: [userId, null]`; `event`,
+  `sensor`, `fob`, `deviceBulk`, and the `*PartialWithReference`
+  variants changed to pull in the new schemas above.
+
+**Files changed**:
+- `third_party/unifi-apis` (submodule SHA `b9b8488` → `cbd293d`)
+- `crates/ferro-protect/build.rs` (SPEC_VERSION constant)
+- Version-string references updated to `7.1.77` across `lib.rs`,
+  `Cargo.toml`, `client.rs`, `rate_limit.rs`, `tests/rate_limit.rs`
+  (fixture + asserts), `README.md`, `ARCHITECTURE.md`, and `PLAN.md`.
+- `PROGRESS.md`
+
+**Decisions / deviations**:
+- `drop_drifted_audio_detection_enum` remains load-bearing:
+  `smartDetectAudioTypes` is still present in `7.1.77`, so the
+  value-sniffing rule stays. (The dated confirmation comment in
+  `spec_rewrite.rs` still reads `7.1.60`; left as a historical record
+  of when it was last checked against firmware.)
+- The `RateLimit-Policy` strings in the spec are byte-identical
+  between `7.1.60` and `7.1.77`, so the `10-in-1sec` default and its
+  doc annotations were re-pointed at `7.1.77` without any behaviour
+  change.
+- Left historical references to `7.1.60` intact where they record
+  *when* something happened (the prior spec-bump entries above, the
+  "added in 7.1.60" note on the bulk-operation rewrite rule, the
+  `update-spec` usage example in PLAN.md).

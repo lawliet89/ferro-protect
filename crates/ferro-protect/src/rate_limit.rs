@@ -35,7 +35,7 @@ type DirectLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMidd
 
 /// Public knobs for the proactive rate limiter.
 ///
-/// Defaults match Protect 7.1.60's advertised policy (`10-in-1sec`).
+/// Defaults match Protect 7.1.77's advertised policy (`10-in-1sec`).
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     /// Target steady-state rate (`rate` requests every `per`) and max burst

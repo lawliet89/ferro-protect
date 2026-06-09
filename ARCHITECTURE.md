@@ -194,7 +194,7 @@ The current state. Updated whenever the structure changes.
 | [src/auth.rs](crates/ferro-protect/src/auth.rs) | `ApiKey(SecretString)` wrapper. `API_KEY_HEADER` constant. |
 | [src/models.rs](crates/ferro-protect/src/models.rs) | **The seam.** Public re-exports from generated model types plus tiny hand-written inline response models. |
 | [src/client.rs](crates/ferro-protect/src/client.rs) | `ProtectClient`, `ProtectClientBuilder`, `TlsMode`, `RetryConfig`. The user-facing surface. Holds two `ClientWithMiddleware` instances (one for reads, one for writes) so retry can apply to GETs by default without re-running mutations. |
-| [src/rate_limit.rs](crates/ferro-protect/src/rate_limit.rs) | `RateLimitConfig` (public) + `RateLimitMiddleware` (internal). [`governor`](https://crates.io/crates/governor)-backed GCRA (leaky bucket) pinned to a fixed `rate / per` quota; defaults to `10-in-1sec` matching Protect 7.1.60. No runtime adaptation -- if Protect ever bumps its advertised quota, bump `rate` in the builder. |
+| [src/rate_limit.rs](crates/ferro-protect/src/rate_limit.rs) | `RateLimitConfig` (public) + `RateLimitMiddleware` (internal). [`governor`](https://crates.io/crates/governor)-backed GCRA (leaky bucket) pinned to a fixed `rate / per` quota; defaults to `10-in-1sec` matching Protect 7.1.77. No runtime adaptation -- if Protect ever bumps its advertised quota, bump `rate` in the builder. |
 | [src/retry.rs](crates/ferro-protect/src/retry.rs) | `RetryAfterAwareMiddleware`. Custom `reqwest-middleware` that retries 429/5xx/timeouts, honouring `Retry-After` when the server sets it (Protect returns `retry-after: 1` on 429). Falls back to exponential backoff with jitter. |
 | [src/generated.rs](crates/ferro-protect/src/generated.rs) | A permissive `#![allow(...)]` block and `include!(concat!(env!("OUT_DIR"), "/generated.rs"))`. Declared as a private `mod generated;` in `lib.rs`; only `models.rs` re-exports from it. |
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
@@ -274,7 +274,7 @@ Three TLS modes ([`TlsMode`](crates/ferro-protect/src/client.rs)):
 ## Rate limiting and retries
 
 The UniFi Protect server advertises an RFC 9331 `RateLimit-Policy`
-header on every response (Protect 7.1.60: `10-in-1sec`, i.e. 10
+header on every response (Protect 7.1.77: `10-in-1sec`, i.e. 10
 requests per rolling 1-second window). The client pins its proactive
 limiter to that quota and honours the per-response `Retry-After` hint,
 so the README's `cargo test --all` works against a real NVR under

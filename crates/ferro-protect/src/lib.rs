@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Async Rust client for the UniFi Protect local integration API (v7.1.60).
+//! Async Rust client for the UniFi Protect local integration API (v7.1.77).
 //!
 //! ```no_run
 //! # async fn run() -> ferro_protect::Result<()> {
