@@ -1,7 +1,6 @@
 //! Persistent on-disk configuration for the `ferro-protect` CLI.
 //!
-//! See `docs/TASK_config_file.md` for the design rationale and
-//! `README.md` for user-facing documentation. This module owns:
+//! See `README.md` for user-facing documentation. This module owns:
 //!
 //! - [`ConfigFile`] — the on-disk schema (TOML, deserialized via
 //!   `toml::de`).
@@ -25,72 +24,13 @@ use thiserror::Error;
 
 use crate::logging::LogLevel;
 
-/// Env var that picks the config *file* (not a field within it). Kept
-/// separate from [`FIELDS`] because it's about file discovery, not a
-/// merged value.
+/// Env var that picks which config *file* the loader opens (distinct
+/// from any field within it).
 pub const ENV_CONFIG_FILE: &str = "UNIFI_PROTECT_CONFIG_FILE";
 
-/// Per-field metadata. Single source of truth for every recognised
-/// config field — drives:
-///
-/// * the `config show` key validator
-/// * the `config template` scaffold
-/// * `config::resolve`'s env-var lookup
-/// * the "valid fields: …" help text in error messages
-///
-#[derive(Debug, Clone, Copy)]
-pub struct FieldMeta {
-    /// Field name as it appears in TOML.
-    pub key: &'static str,
-    /// Human-readable purpose. One-liner; rendered as `# {description}`
-    /// in the `config template` scaffold.
-    pub description: &'static str,
-    /// Example RHS for the `config template` scaffold. Include quotes
-    /// if the value is a string.
-    pub example: &'static str,
-}
-
-/// Canonical scaffold table for `config template`.
-///
-/// The CLI only walks this table to render the commented-out file;
-/// resolution and `show` hand-name every field, so adding a key here
-/// without wiring it up elsewhere is harmless.
-pub const FIELDS: &[FieldMeta] = &[
-    FieldMeta {
-        key: "host",
-        description: "NVR hostname or host:port. Mutually exclusive with `base_url`.",
-        example: "\"nvr.local\"",
-    },
-    FieldMeta {
-        key: "base_url",
-        description: "Override the entire base URL. Mutually exclusive with `host`.",
-        example: "\"https://nvr.local/proxy/protect/integration\"",
-    },
-    FieldMeta {
-        key: "api_key_file",
-        description: "Path to a file containing the API key (preferred over inline).",
-        example: "\"~/.config/ferro-protect/api_key\"",
-    },
-    FieldMeta {
-        key: "insecure",
-        description: "Skip TLS certificate validation (typical for self-signed NVRs).",
-        example: "false",
-    },
-    FieldMeta {
-        key: "json",
-        description: "Default to JSON output instead of human-readable text.",
-        example: "false",
-    },
-    FieldMeta {
-        key: "log_level",
-        description: "Log level: error | warn | info | debug | trace.",
-        example: "\"warn\"",
-    },
-];
-
-/// On-disk config schema. Every field is optional; `None` means "not
-/// set" (distinct from "set to the type default"), which lets us tell
-/// "explicit `false`" apart from "absent" for source attribution.
+/// On-disk config schema. Every field is `Option<T>` so the resolver
+/// can tell "absent" from "explicit `false`" and let env / flag
+/// values fill in only the unset slots.
 ///
 /// `deny_unknown_fields` traps typos like `apikey = ...` at parse
 /// time. The deliberately-removed `api_key = "..."` raw-key field is
@@ -229,9 +169,11 @@ impl fmt::Display for FileDiscoverySource {
     }
 }
 
-/// Outcome of a successful [`load`]: the parsed file plus the path it
-/// came from (used for source attribution in [`config show`]) and which
-/// discovery source picked the path.
+/// Outcome of a successful [`load`].
+///
+/// The parsed file plus the path it came from and which discovery
+/// source picked the path. `path` is used by the `ExplicitMissing`
+/// error to point at the file the flag or env var referenced.
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub file: ConfigFile,

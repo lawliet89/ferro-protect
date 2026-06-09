@@ -16,7 +16,6 @@
 //! than read directly, so this module stays independent of the config
 //! loader.
 
-use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -26,35 +25,8 @@ use thiserror::Error;
 pub const ENV_KEY_FILE: &str = "UNIFI_PROTECT_API_KEY_FILE";
 pub const ENV_KEY: &str = "UNIFI_PROTECT_API_KEY";
 
-/// Where the resolved key came from. Returned alongside the
-/// [`SecretString`] so `config show` can attribute the `api_key` row
-/// without re-running the resolver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApiKeySource {
-    /// `--api-key-file <PATH>` flag.
-    Flag,
-    /// `UNIFI_PROTECT_API_KEY_FILE` env var (path).
-    EnvFile,
-    /// `UNIFI_PROTECT_API_KEY` env var (raw key).
-    EnvRaw,
-    /// Config file `api_key_file` field (path).
-    ConfigFile,
-}
-
-impl fmt::Display for ApiKeySource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label = match self {
-            Self::Flag => "--api-key-file flag",
-            Self::EnvFile => "env: UNIFI_PROTECT_API_KEY_FILE",
-            Self::EnvRaw => "env: UNIFI_PROTECT_API_KEY",
-            Self::ConfigFile => "config file: api_key_file",
-        };
-        f.write_str(label)
-    }
-}
-
-/// Inputs to [`resolve`], grouped so callers don't have to thread three
-/// positional args.
+/// Inputs to [`resolve`], grouped so callers don't have to thread
+/// two positional args.
 ///
 /// The `config_file` field comes from the merged
 /// [`crate::config::ConfigFile`] when one is loaded; pass `None` when
@@ -97,10 +69,6 @@ pub enum ApiKeyError {
 /// surface (e.g. lax file permissions). Production callers pass
 /// `io::stderr().lock()`; tests can pass a `Vec<u8>`.
 ///
-/// Returns the key plus the [`ApiKeySource`] that supplied it, so
-/// callers can attribute the key's origin in `config show` without
-/// re-running the resolver.
-///
 /// # Errors
 ///
 /// - [`ApiKeyError::NotProvided`] if no source supplies a key.
@@ -111,40 +79,31 @@ pub fn resolve<E, W>(
     sources: &Sources<'_>,
     env: &E,
     warnings: &mut W,
-) -> Result<(SecretString, ApiKeySource), ApiKeyError>
+) -> Result<SecretString, ApiKeyError>
 where
     E: Fn(&str) -> Option<String> + ?Sized,
     W: Write,
 {
     if let Some(path) = sources.flag_file {
-        return Ok((read_key_file(path, warnings)?, ApiKeySource::Flag));
+        return read_key_file(path, warnings);
     }
+    // Empty/whitespace env values fall through (same rule
+    // `config::resolve_*` uses): a leftover `UNIFI_PROTECT_API_KEY_FILE=""`
+    // shouldn't try to read an empty path.
     if let Some(path) = env(ENV_KEY_FILE) {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
-            return Ok((
-                read_key_file(Path::new(trimmed), warnings)?,
-                ApiKeySource::EnvFile,
-            ));
+            return read_key_file(Path::new(trimmed), warnings);
         }
-        // Empty env var falls through (same rule the raw-key branch
-        // below applies, and the same rule `config::resolve_string`
-        // uses for the host/base_url/etc. env vars). Without this,
-        // `UNIFI_PROTECT_API_KEY_FILE=""` would try to read an empty
-        // path and error noisily.
     }
     if let Some(raw) = env(ENV_KEY) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
-            return Ok((
-                SecretString::from(trimmed.to_string()),
-                ApiKeySource::EnvRaw,
-            ));
+            return Ok(SecretString::from(trimmed.to_string()));
         }
-        // Empty env falls through to the lower-priority sources.
     }
     if let Some(path) = sources.config_file {
-        return Ok((read_key_file(path, warnings)?, ApiKeySource::ConfigFile));
+        return read_key_file(path, warnings);
     }
     Err(ApiKeyError::NotProvided)
 }

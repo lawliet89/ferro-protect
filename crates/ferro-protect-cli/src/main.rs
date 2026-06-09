@@ -234,7 +234,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     // Resolve the key in a sync block so the stderr lock guard (which
     // isn't Send) never lives across an .await point.
-    let (key, _key_source) = {
+    let key = {
         let mut stderr = std::io::stderr().lock();
         let sources = Sources {
             flag_file: cli.api_key_file.as_deref(),
@@ -244,7 +244,7 @@ async fn run(cli: Cli) -> Result<()> {
         };
         api_key::resolve(&sources, &env, &mut stderr)?
     };
-    log::debug!("api key resolved (source resolution complete)");
+    log::debug!("api key resolved");
 
     let mut builder = ProtectClient::builder().api_key(key);
     match (resolved.base_url.as_deref(), resolved.host.as_deref()) {
