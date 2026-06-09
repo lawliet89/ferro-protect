@@ -52,10 +52,12 @@ pub struct FieldMeta {
     /// if the value is a string.
     pub example: &'static str,
     /// Env var that `config::resolve` consults for this field, or `None`.
-    /// `None` for `api_key`/`api_key_file` (env handling lives in
-    /// [`crate::api_key`]) and `log_level` (the env_logger filter syntax
-    /// of `UNIFI_PROTECT_LOG`/`RUST_LOG` can't reduce to a single
-    /// `LogLevel`, so we keep that resolution inside `logging::init`).
+    /// `None` for `api_key` (the secret-bearing raw-key env var
+    /// `UNIFI_PROTECT_API_KEY` is resolved in [`crate::api_key`]
+    /// alongside the file-reading branches) and `log_level` (the
+    /// env_logger filter syntax of `UNIFI_PROTECT_LOG`/`RUST_LOG`
+    /// can't reduce to a single `LogLevel`, so we keep that resolution
+    /// inside `logging::init`).
     pub env_var: Option<&'static str>,
 }
 
@@ -77,7 +79,7 @@ pub const FIELDS: &[FieldMeta] = &[
         key: "api_key_file",
         description: "Path to a file containing the API key (preferred over inline).",
         example: "\"~/.config/ferro-protect/api_key\"",
-        env_var: None,
+        env_var: Some(crate::api_key::ENV_KEY_FILE),
     },
     FieldMeta {
         key: "api_key",
@@ -492,7 +494,9 @@ where
         cf.and_then(|c| c.base_url.as_deref()),
     );
     let api_key_file = resolve_path_field(
+        env_var_for("api_key_file"),
         flags.api_key_file.as_deref(),
+        env,
         cf.and_then(|c| c.api_key_file.as_deref()),
     );
     let insecure = resolve_bool(
@@ -582,12 +586,35 @@ where
     })
 }
 
-fn resolve_path_field(flag: Option<&Path>, file: Option<&Path>) -> Option<Resolved<PathBuf>> {
+fn resolve_path_field<E>(
+    env_name: &'static str,
+    flag: Option<&Path>,
+    env: &E,
+    file: Option<&Path>,
+) -> Option<Resolved<PathBuf>>
+where
+    E: Fn(&str) -> Option<String> + ?Sized,
+{
     if let Some(p) = flag {
         return Some(Resolved {
             value: p.to_path_buf(),
             source: FieldSource::Flag,
         });
+    }
+    // Mirror `resolve_string` / `api_key::resolve`: trim, treat empty as
+    // "not set" so a leftover `UNIFI_PROTECT_API_KEY_FILE=""` falls
+    // through instead of masking the file value. Tilde is *not* expanded
+    // here; the runtime `api_key::resolve` doesn't expand the env path
+    // either, so `config show` reflects what the runtime would actually
+    // open.
+    if let Some(raw) = env(env_name) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(Resolved {
+                value: PathBuf::from(trimmed),
+                source: FieldSource::Env(env_name),
+            });
+        }
     }
     file.map(|p| Resolved {
         value: p.to_path_buf(),

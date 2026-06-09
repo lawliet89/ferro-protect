@@ -596,6 +596,39 @@ fn precedence_env_wins_over_file_in_show() {
     assert_eq!(stdout.trim_end(), "env-host");
 }
 
+/// `config show api_key_file` must report `UNIFI_PROTECT_API_KEY_FILE`
+/// when it's set, not the lower-priority file path. The runtime API-key
+/// resolver gives the env var higher precedence than the config file's
+/// `api_key_file`, so attributing the row to the file would be a stale
+/// path. Regression for PR #10 review finding (P2).
+#[test]
+fn show_api_key_file_reflects_env_override() {
+    let mut cmd = common::isolated_cmd();
+    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
+    fs::write(
+        cfg.path(),
+        "host = \"nvr.local\"\napi_key_file = \"/file/path\"\n",
+    )
+    .expect("write");
+    let out = cmd
+        .env("UNIFI_PROTECT_API_KEY_FILE", "/env/path")
+        .args([
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--json=true",
+            "config",
+            "show",
+            "api_key_file",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(parsed["value"], "/env/path");
+    assert_eq!(parsed["source"], "env: UNIFI_PROTECT_API_KEY_FILE");
+}
+
 /// `config show` must not report `--config` as the api_key source --
 /// `--config` is a config-file path, not an `--api-key-file` path.
 /// Regression for the Copilot review finding.
