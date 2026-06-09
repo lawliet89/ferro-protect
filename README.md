@@ -146,9 +146,9 @@ rejected with a sanitized error that doesn't echo the secret.
 ferro-protect config template            # write a commented-out scaffold to the config path
 ferro-protect config template --force    # overwrite an existing file
 ferro-protect config template --stdout   # print the scaffold; no file is written
-ferro-protect config show                # print effective config + source per field
+ferro-protect config show                # print effective config (field/value table)
 ferro-protect config show host           # bare value, scriptable
-ferro-protect config show --json         # JSON form, with per-field {value, source}
+ferro-protect config show --json         # JSON form (array of {field, value}; single-key: {value})
 ferro-protect config path                # print the resolved config file path
 ```
 

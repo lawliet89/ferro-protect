@@ -27,7 +27,7 @@ const SAMPLE: &str = "host = \"nvr.local\"\n\
 // ----------------- config show -----------------
 
 #[test]
-fn show_prints_full_table_with_source_attribution() {
+fn show_prints_full_table_with_field_and_value() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), SAMPLE).expect("write");
@@ -41,12 +41,13 @@ fn show_prints_full_table_with_source_attribution() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("host"), "stdout = {stdout}");
     assert!(stdout.contains("nvr.local"), "stdout = {stdout}");
-    assert!(
-        stdout.contains("config file:"),
-        "expected source attribution, got: {stdout}"
-    );
     assert!(stdout.contains("insecure"), "stdout = {stdout}");
     assert!(stdout.contains("true"), "stdout = {stdout}");
+    // Spike: source column dropped, so the header is just FIELD/VALUE.
+    assert!(
+        !stdout.contains("SOURCE"),
+        "SOURCE column should be gone in the no-attribution spike: {stdout}"
+    );
     // api_key is never printed -- always masked.
     assert!(
         !stdout.contains("/tmp/some-key") || stdout.contains("api_key_file"),
@@ -124,7 +125,7 @@ fn show_json_full_emits_array_of_rows() {
 }
 
 #[test]
-fn show_json_single_key_emits_value_and_source_object() {
+fn show_json_single_key_emits_value_object() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), SAMPLE).expect("write");
@@ -144,7 +145,8 @@ fn show_json_single_key_emits_value_and_source_object() {
         .clone();
     let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(parsed["value"], "nvr.local");
-    assert!(parsed["source"].as_str().unwrap().contains("config file"));
+    // Spike: no `source` key in the single-row JSON.
+    assert!(parsed.get("source").is_none(), "got: {parsed}");
 }
 
 /// Inline `api_key = "..."` in the config file was removed: a
@@ -559,11 +561,12 @@ fn precedence_env_wins_over_file_in_show() {
     assert_eq!(stdout.trim_end(), "env-host");
 }
 
-/// `config show api_key_file` must report `UNIFI_PROTECT_API_KEY_FILE`
-/// when it's set, not the lower-priority file path. The runtime API-key
-/// resolver gives the env var higher precedence than the config file's
-/// `api_key_file`, so attributing the row to the file would be a stale
-/// path. Regression for PR #10 review finding (P2).
+/// `config show api_key_file` reflects `UNIFI_PROTECT_API_KEY_FILE`
+/// when it's set, not the lower-priority file path. The runtime
+/// API-key resolver prefers the env var over the file's
+/// `api_key_file`, so showing the file value would be a stale path.
+/// Without source attribution there's no row to mis-attribute, but
+/// the *value* still has to be the env-precedence winner.
 #[test]
 fn show_api_key_file_reflects_env_override() {
     let mut cmd = common::isolated_cmd();
@@ -589,45 +592,12 @@ fn show_api_key_file_reflects_env_override() {
         .clone();
     let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(parsed["value"], "/env/path");
-    assert_eq!(parsed["source"], "env: UNIFI_PROTECT_API_KEY_FILE");
 }
 
-/// `config show` must not report `--config` as the api_key source --
-/// `--config` is a config-file path, not an `--api-key-file` path.
-/// Regression for the Copilot review finding.
+/// `config show` reports `log_level = warn` (the runtime default)
+/// when neither flag nor file supplies a value.
 #[test]
-fn show_does_not_attribute_api_key_to_config_flag() {
-    let mut cmd = common::isolated_cmd();
-    let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-    fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write");
-    let out = cmd
-        .args([
-            "--config",
-            cfg.path().to_str().unwrap(),
-            "--json=true",
-            "config",
-            "show",
-        ])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    let api_key_row = parsed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["field"] == "api_key")
-        .expect("api_key row");
-    assert_eq!(api_key_row["value"], "<unset>");
-    assert_eq!(api_key_row["source"], "default");
-}
-
-/// `config show` reports `log_level = warn` (the runtime default) with
-/// source `default` instead of `<unset>` when neither flag nor file
-/// supplies a value. Regression for the Copilot review finding.
-#[test]
-fn show_log_level_defaults_to_warn_with_default_source() {
+fn show_log_level_defaults_to_warn() {
     let mut cmd = common::isolated_cmd();
     let cfg = tempfile::NamedTempFile::new().expect("tempfile");
     fs::write(cfg.path(), "host = \"nvr.local\"\n").expect("write"); // no log_level
@@ -646,7 +616,6 @@ fn show_log_level_defaults_to_warn_with_default_source() {
         .clone();
     let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(parsed["value"], "warn");
-    assert_eq!(parsed["source"], "default");
 }
 
 /// Cross-source mutual exclusion: setting `host` in the file and

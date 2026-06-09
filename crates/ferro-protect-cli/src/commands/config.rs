@@ -1,7 +1,7 @@
 //! `ferro-protect config` subcommand: persistent TOML config file
 //! management. Three actions:
 //!
-//! - [`Action::Show`] — print effective config + source attribution.
+//! - [`Action::Show`] — print effective resolved config (field/value).
 //! - [`Action::Path`] — print the resolved config file path.
 //! - [`Action::Template`] — write (or print) a commented-out scaffold
 //!   listing every recognised field.
@@ -24,14 +24,13 @@ use thiserror::Error;
 
 use crate::api_key::{self, ApiKeySource};
 use crate::config::{
-    self, FIELDS, FieldSource, Flags, LoadedConfig, Resolved, ResolvedConfig, is_known_key,
-    known_keys_joined,
+    self, FIELDS, Flags, LoadedConfig, Resolved, ResolvedConfig, is_known_key, known_keys_joined,
 };
 
 #[derive(Debug, Subcommand)]
 pub enum Action {
-    /// Print the effective resolved configuration, with each value
-    /// annotated by its source (env / config file / default).
+    /// Print the effective resolved configuration as a field/value
+    /// table.
     ///
     /// Only `--config` is honoured here (to pick which file to
     /// inspect). Other per-invocation flags like `--host` or
@@ -44,7 +43,7 @@ pub enum Action {
     /// logger (env_logger syntax) and are not shown here.
     ///
     /// Pass a single KEY to print only that field's value (scriptable).
-    /// `--json` switches to a structured `{value, source}` form.
+    /// `--json` switches to a structured `{value}` form.
     Show {
         /// Print only this single field's value. Without a key, the
         /// full table is printed.
@@ -203,13 +202,11 @@ where
 struct ShowRow {
     field: &'static str,
     value: String,
-    source: String,
 }
 
 #[derive(Debug, Serialize)]
 struct ShowSingle {
     value: String,
-    source: String,
 }
 
 fn show_all(
@@ -231,11 +228,11 @@ fn show_all(
 
     let table_rows: Vec<Vec<String>> = rows
         .iter()
-        .map(|r| vec![r.field.to_owned(), r.value.clone(), r.source.clone()])
+        .map(|r| vec![r.field.to_owned(), r.value.clone()])
         .collect();
     let stdout = io::stdout();
     let mut lock = stdout.lock();
-    lock.write_all(crate::output::table(&["FIELD", "VALUE", "SOURCE"], &table_rows).as_bytes())
+    lock.write_all(crate::output::table(&["FIELD", "VALUE"], &table_rows).as_bytes())
         .map_err(|e| ConfigCmdError::Other(e.into()))?;
     Ok(())
 }
@@ -259,10 +256,7 @@ fn show_one(
         .find(|r| r.field == key)
         .expect("collect_rows emits a row for every FIELDS key");
     if json {
-        let single = ShowSingle {
-            value: row.value,
-            source: row.source,
-        };
+        let single = ShowSingle { value: row.value };
         let stdout = io::stdout();
         let mut lock = stdout.lock();
         serde_json::to_writer_pretty(&mut lock, &single)
@@ -276,44 +270,36 @@ fn show_one(
 }
 
 fn collect_rows(resolved: &ResolvedConfig, api_key: Option<ApiKeySource>) -> Vec<ShowRow> {
-    let cfg_path = resolved.config_file_path.as_deref();
-    let mut rows = Vec::with_capacity(FIELDS.len());
-    rows.push(ShowRow {
-        field: "host",
-        value: render_opt(resolved.host.as_ref(), String::clone),
-        source: source_label(resolved.host.as_ref().map(|r| &r.source), cfg_path),
-    });
-    rows.push(ShowRow {
-        field: "base_url",
-        value: render_opt(resolved.base_url.as_ref(), String::clone),
-        source: source_label(resolved.base_url.as_ref().map(|r| &r.source), cfg_path),
-    });
-    rows.push(ShowRow {
-        field: "api_key_file",
-        value: render_opt(resolved.api_key_file.as_ref(), |p| p.display().to_string()),
-        source: source_label(resolved.api_key_file.as_ref().map(|r| &r.source), cfg_path),
-    });
-    rows.push(ShowRow {
-        field: "api_key",
-        value: api_key.map_or_else(|| "<unset>".to_owned(), |_| "<set>".to_owned()),
-        source: api_key.map_or_else(|| "default".to_owned(), |s| s.to_string()),
-    });
-    rows.push(ShowRow {
-        field: "insecure",
-        value: resolved.insecure.value.to_string(),
-        source: source_label(Some(&resolved.insecure.source), cfg_path),
-    });
-    rows.push(ShowRow {
-        field: "json",
-        value: resolved.json.value.to_string(),
-        source: source_label(Some(&resolved.json.source), cfg_path),
-    });
-    rows.push(ShowRow {
-        field: "log_level",
-        value: resolved.log_level.value.to_string(),
-        source: source_label(Some(&resolved.log_level.source), cfg_path),
-    });
-    rows
+    vec![
+        ShowRow {
+            field: "host",
+            value: render_opt(resolved.host.as_ref(), String::clone),
+        },
+        ShowRow {
+            field: "base_url",
+            value: render_opt(resolved.base_url.as_ref(), String::clone),
+        },
+        ShowRow {
+            field: "api_key_file",
+            value: render_opt(resolved.api_key_file.as_ref(), |p| p.display().to_string()),
+        },
+        ShowRow {
+            field: "api_key",
+            value: api_key.map_or_else(|| "<unset>".to_owned(), |_| "<set>".to_owned()),
+        },
+        ShowRow {
+            field: "insecure",
+            value: resolved.insecure.value.to_string(),
+        },
+        ShowRow {
+            field: "json",
+            value: resolved.json.value.to_string(),
+        },
+        ShowRow {
+            field: "log_level",
+            value: resolved.log_level.value.to_string(),
+        },
+    ]
 }
 
 fn render_opt<T, F>(slot: Option<&Resolved<T>>, render: F) -> String
@@ -321,18 +307,6 @@ where
     F: FnOnce(&T) -> String,
 {
     slot.map_or_else(|| "<unset>".to_owned(), |r| render(&r.value))
-}
-
-fn source_label(source: Option<&FieldSource>, file_path: Option<&Path>) -> String {
-    match source {
-        None | Some(FieldSource::Default) => "default".to_owned(),
-        Some(FieldSource::Flag) => "flag".to_owned(),
-        Some(FieldSource::Env(name)) => format!("env: {name}"),
-        Some(FieldSource::ConfigFile) => file_path.map_or_else(
-            || "config file".to_owned(),
-            |p| format!("config file: {}", p.display()),
-        ),
-    }
 }
 
 // --------------------------------------------------------------------
@@ -386,7 +360,7 @@ fn build_template() -> String {
          # Precedence: flag > env > this file > built-in default.\n\
          # Every recognised field is listed below; uncomment the lines\n\
          # you need. `ferro-protect config show` displays the effective\n\
-         # values with per-field source attribution.\n",
+         # resolved values.\n",
     );
     for f in FIELDS {
         // Empty `example` marks fields that are addressable via
@@ -516,7 +490,7 @@ fn write_file_secure(path: &Path, contents: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::FIELDS;
+    use crate::config::{FIELDS, FieldSource};
     use crate::logging::LogLevel;
 
     /// Guard against drift between `FIELDS` (the single source of
