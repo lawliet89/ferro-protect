@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[path = "build_support/spec_rewrite.rs"]
 mod spec_rewrite;
 
-const SPEC_VERSION: &str = "7.1.60";
+const SPEC_VERSION: &str = "7.1.77";
 const SPEC_DIR: &str = "../../third_party/unifi-apis/unifi-protect";
 
 type BuildResult<T> = Result<T, Box<dyn std::error::Error>>;

@@ -78,7 +78,7 @@ impl Default for RetryConfig {
 /// instance across tasks.
 ///
 /// **Defaults you get for free:** a proactive rate limiter pinned to the
-/// server's advertised quota (10 requests / 1 second on Protect 7.1.60)
+/// server's advertised quota (10 requests / 1 second on Protect 7.1.77)
 /// and a retry middleware that honours `Retry-After` on 429 / 5xx for
 /// idempotent reads. Both are configurable on the builder; see
 /// [`RateLimitConfig`] and [`RetryConfig`].
@@ -309,7 +309,7 @@ impl ProtectClientBuilder {
     /// retry middleware still recovers from any 429s the server returns).
     ///
     /// The default is `Some(RateLimitConfig::default())`, which matches
-    /// the policy Protect 7.1.60 advertises (10 requests / 1 second).
+    /// the policy Protect 7.1.77 advertises (10 requests / 1 second).
     /// Most callers should not change this.
     #[must_use]
     pub const fn rate_limit(mut self, config: Option<RateLimitConfig>) -> Self {

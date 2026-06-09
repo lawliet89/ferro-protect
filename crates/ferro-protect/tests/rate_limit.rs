@@ -28,7 +28,7 @@ use secrecy::SecretString;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-const FIXTURE_OK: &str = r#"{"applicationVersion":"7.1.60"}"#;
+const FIXTURE_OK: &str = r#"{"applicationVersion":"7.1.77"}"#;
 const FIXTURE_429: &str = r#"{"name":"tooManyRequests","error":"Too many requests"}"#;
 
 async fn client_for(server: &MockServer) -> ProtectClient {
@@ -82,7 +82,7 @@ async fn retries_429_then_succeeds_honouring_retry_after() {
     let info = client.info().await.expect("retry recovers from 429");
     let elapsed = started.elapsed();
 
-    assert_eq!(info.application_version.to_string(), "7.1.60");
+    assert_eq!(info.application_version.to_string(), "7.1.77");
     assert_eq!(calls.load(Ordering::SeqCst), 2, "exactly one retry");
     // Retry-After: 1 must have been honoured. The middleware respects
     // the header rather than its own backoff schedule, so elapsed
@@ -190,7 +190,7 @@ async fn rate_limiter_runs_on_every_retry_attempt() {
     let info = client.info().await.expect("retry recovers from 429");
     let elapsed = started.elapsed();
 
-    assert_eq!(info.application_version.to_string(), "7.1.60");
+    assert_eq!(info.application_version.to_string(), "7.1.77");
     assert_eq!(calls.load(Ordering::SeqCst), 2, "exactly one retry");
     // The retry waited on the limiter, not on `Retry-After`/backoff.
     assert!(
