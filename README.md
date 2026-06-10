@@ -126,9 +126,8 @@ host = "nvr.local"
 
 # Pointer to a separate key file. A leading `~/` is expanded at load
 # time using `$HOME`; on Windows that variable is usually unset, so
-# prefer an absolute path there. Inline `api_key = "..."` in this
-# file is deliberately *not* accepted -- use `UNIFI_PROTECT_API_KEY`
-# for ad-hoc raw keys.
+# prefer an absolute path there. There is no inline `api_key` field --
+# use `UNIFI_PROTECT_API_KEY` for ad-hoc raw keys.
 api_key_file = "~/.config/ferro-protect/api_key"
 
 insecure = false
@@ -137,8 +136,7 @@ log_level = "warn"  # one of: error, warn, info, debug, trace
 ```
 
 Unknown keys are rejected at load time (typo guard). Setting both
-`host` and `base_url` is also rejected. An inline `api_key = "..."` is
-rejected with a sanitized error that doesn't echo the secret.
+`host` and `base_url` is also rejected.
 
 ### Managing the config file
 
@@ -169,11 +167,11 @@ bootstrap. Other subcommands (`info`, `cameras list`, …) still treat
 a missing XDG default as "no config" and fall back to env vars +
 flags as usual.
 
-There is **no CLI surface for writing the API key** — the raw key
-would land in shell history, `ps`, and the parent process's argv.
-Inline `api_key = "..."` in the TOML file is also deliberately
-rejected (a secret in a versioned config file lands in commits,
-backups, and dotfile syncs). Use one of the safer paths:
+There is **no CLI surface for writing the API key**, and **no inline
+`api_key` field** in the config file — the raw key would land in shell
+history, `ps`, the parent process's argv, or a versioned config file
+that ends up in commits, backups, and dotfile syncs. Use one of the
+safer paths:
 
 - `api_key_file = "<PATH>"` in the config file (point at a file the
   shell will not log), or

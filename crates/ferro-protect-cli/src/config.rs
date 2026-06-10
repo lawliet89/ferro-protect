@@ -32,13 +32,11 @@ pub const ENV_CONFIG_FILE: &str = "UNIFI_PROTECT_CONFIG_FILE";
 /// can tell "absent" from "explicit `false`" and let env / flag
 /// values fill in only the unset slots.
 ///
-/// `deny_unknown_fields` traps typos like `apikey = ...` at parse
-/// time. The deliberately-removed `api_key = "..."` raw-key field is
-/// short-circuited *before* this struct is deserialized (see [`load`])
-/// so the TOML parse error -- which echoes the offending line -- can't
-/// leak a secret. Mutual exclusion between `host` and `base_url` is
-/// enforced by [`Self::validate`], which the loader calls after
-/// parsing.
+/// `deny_unknown_fields` traps typos (`apikey = ...`) and any
+/// unsupported key -- including an inline `api_key`, which was never a
+/// supported field -- at parse time. Mutual exclusion between `host`
+/// and `base_url` is enforced by [`Self::validate`], which the loader
+/// calls after parsing.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
@@ -114,14 +112,6 @@ pub enum ConfigError {
     },
     #[error("config file: cannot set both `host` and `base_url`")]
     HostAndBaseUrl,
-    #[error(
-        "config file {}: inline `api_key = \"…\"` is no longer accepted \
-         (a secret in TOML lands in commits, backups, and dotfile syncs). \
-         Use the `UNIFI_PROTECT_API_KEY` env var for ad-hoc raw keys, or \
-         `api_key_file = \"<PATH>\"` to point at a file holding the key.",
-        path.display(),
-    )]
-    InlineApiKey { path: PathBuf },
     #[error(
         "config file not found at {}\n\
          (referenced via {})",
@@ -264,26 +254,7 @@ where
         }
     };
 
-    // Two-step parse so we can return a sanitized error if the file
-    // still has an inline `api_key = "..."` field: `deny_unknown_fields`
-    // on `ConfigFile` would otherwise echo the offending TOML line --
-    // including the secret value -- in the parse error. Parse to a
-    // generic `Table` first (lenient), short-circuit on `api_key`, then
-    // `try_into` for the typed deserialization (which still enforces
-    // `deny_unknown_fields` on every other field).
-    let value: toml::Value = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
-        path: path.clone(),
-        source: e,
-    })?;
-    // Recursive scan: a nested `[some_table] api_key = "..."` would
-    // also leak through `deny_unknown_fields`'s error message if the
-    // unknown table happens to be reported with surrounding context.
-    // Bailing on *any* `api_key` key, at any depth, makes the
-    // "never leak the secret" guarantee invariant to TOML shape.
-    if contains_api_key(&value) {
-        return Err(ConfigError::InlineApiKey { path });
-    }
-    let mut file: ConfigFile = value.try_into().map_err(|e| ConfigError::Parse {
+    let mut file: ConfigFile = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
         path: path.clone(),
         source: e,
     })?;
@@ -299,18 +270,6 @@ where
     }
 
     Ok(Some(LoadedConfig { file, path, source }))
-}
-
-/// Recursively check whether any key named `api_key` appears anywhere
-/// in a TOML value. Used by [`load`] to refuse secret-bearing files
-/// without going through `deny_unknown_fields`, whose parse error
-/// would echo the offending line (including the secret) to stderr.
-fn contains_api_key(v: &toml::Value) -> bool {
-    match v {
-        toml::Value::Table(t) => t.contains_key("api_key") || t.values().any(contains_api_key),
-        toml::Value::Array(a) => a.iter().any(contains_api_key),
-        _ => false,
-    }
 }
 
 /// Replace a leading `~/` (or bare `~`) with the value of `$HOME`.

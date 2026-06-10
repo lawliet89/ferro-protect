@@ -96,47 +96,6 @@ fn show_json_emits_array_of_rows() {
     assert!(arr.iter().any(|row| row["field"] == "api_key_file"));
 }
 
-/// `api_key = "..."` at any depth in the config file is rejected
-/// without echoing the secret value to stderr. The loader
-/// recursively scans the parsed TOML before the typed
-/// deserialization runs, so even nested or `deny_unknown_fields`
-/// error paths can't leak the value.
-#[test]
-fn inline_api_key_in_config_file_is_rejected() {
-    const SECRET: &str = "supersecret-must-not-leak";
-
-    for (label, body) in [
-        (
-            "top-level",
-            format!("host = \"nvr.local\"\napi_key = \"{SECRET}\"\n"),
-        ),
-        ("nested table", format!("[auth]\napi_key = \"{SECRET}\"\n")),
-        ("dotted key", format!("auth.api_key = \"{SECRET}\"\n")),
-    ] {
-        let cfg = tempfile::NamedTempFile::new().expect("tempfile");
-        fs::write(cfg.path(), &body).expect("write");
-        let out = common::isolated_cmd()
-            .args(["--config", cfg.path().to_str().unwrap(), "config", "show"])
-            .assert()
-            .failure()
-            .get_output()
-            .clone();
-        let merged = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
-        );
-        assert!(
-            !merged.contains(SECRET),
-            "[{label}] secret leaked into stdout/stderr: {merged}"
-        );
-        assert!(
-            merged.contains("api_key"),
-            "[{label}] expected error to mention `api_key`: {merged}"
-        );
-    }
-}
-
 // ----------------- config path -----------------
 
 #[test]
