@@ -124,11 +124,10 @@ CI jobs — anywhere argv is awkward to control. Distinguish this from
 host = "nvr.local"
 # base_url = "https://nvr.local/proxy/protect/integration"
 
-# Pointer to a separate key file. A leading `~/` is expanded at load
-# time using `$HOME`; on Windows that variable is usually unset, so
-# prefer an absolute path there. There is no inline `api_key` field --
+# Pointer to a separate key file. Use an absolute path -- `~` is not
+# expanded (TOML is not a shell). There is no inline `api_key` field;
 # use `UNIFI_PROTECT_API_KEY` for ad-hoc raw keys.
-api_key_file = "~/.config/ferro-protect/api_key"
+api_key_file = "/home/you/.config/ferro-protect/api_key"
 
 insecure = false
 json = false

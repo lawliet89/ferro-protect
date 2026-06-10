@@ -254,52 +254,12 @@ where
         }
     };
 
-    let mut file: ConfigFile = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
+    let file: ConfigFile = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
         path: path.clone(),
         source: e,
     })?;
     file.validate()?;
-    // Normalise tilde-paths once at load time so every downstream
-    // consumer (`api_key::resolve`, `config show`, etc.) sees an
-    // absolute path. TOML is not a shell, so `~/...` isn't expanded by
-    // the parser. Users hand-editing `api_key_file = "~/..."` is the
-    // case to support; without this, `read_to_string` would fail at
-    // runtime against a literal `~` directory.
-    if let Some(p) = file.api_key_file.take() {
-        file.api_key_file = Some(expand_tilde(&p));
-    }
-
     Ok(Some(LoadedConfig { file, path, source }))
-}
-
-/// Replace a leading `~/` (or bare `~`) with the value of `$HOME`.
-///
-/// Returns the path unchanged when:
-///
-/// - `HOME` is unset (the typical Windows case — `USERPROFILE` is *not*
-///   honoured by design; users running on Windows should write absolute
-///   paths or set `HOME` explicitly),
-/// - the path doesn't start with `~`,
-/// - or the path's `~user` form is used (intentionally not supported).
-///
-/// Public because `config::load` calls it once at parse time to
-/// normalise `api_key_file` so every downstream consumer
-/// (`api_key::resolve`, `config show`, …) sees an absolute path.
-#[must_use]
-pub fn expand_tilde(p: &Path) -> PathBuf {
-    let Some(s) = p.to_str() else {
-        return p.to_path_buf();
-    };
-    let Some(home) = std::env::var_os("HOME") else {
-        return p.to_path_buf();
-    };
-    if let Some(rest) = s.strip_prefix("~/") {
-        return PathBuf::from(home).join(rest);
-    }
-    if s == "~" {
-        return PathBuf::from(home);
-    }
-    p.to_path_buf()
 }
 
 /// Flag inputs to [`resolve`]. Decoupled from the clap-derived `Cli`
@@ -446,9 +406,9 @@ where
     if let Some(p) = flag {
         return Some(p.to_path_buf());
     }
-    // Empty/whitespace env falls through. Tilde is *not* expanded on
-    // env paths; `api_key::resolve` doesn't expand them either, so
-    // what we return is what the runtime would open.
+    // Empty/whitespace env falls through. Paths are taken literally
+    // (no `~` expansion anywhere) so what we return is exactly what
+    // the runtime would open.
     if let Some(raw) = env(env_name) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {

@@ -248,8 +248,9 @@ const TEMPLATE: &str = "\
 # Override the entire base URL. Mutually exclusive with `host`.
 # base_url = \"https://nvr.local/proxy/protect/integration\"
 
-# Path to a file containing the API key (preferred over inline).
-# api_key_file = \"~/.config/ferro-protect/api_key\"
+# Path to a file containing the API key. Use an absolute path --
+# `~` is not expanded here (TOML is not a shell).
+# api_key_file = \"/home/you/.config/ferro-protect/api_key\"
 
 # Skip TLS certificate validation (typical for self-signed NVRs).
 # insecure = false

@@ -419,37 +419,6 @@ fn template_atomic_write_does_not_leave_tmp_file() {
     );
 }
 
-// ----------------- tilde expansion at load -----------------
-
-/// The template example for `api_key_file` is `~/.config/...`; users
-/// hand-edit that into their config. Without expansion, the runtime
-/// would try to `read_to_string("~/...")` and fail. Verify the loader
-/// expands tilde so `config show api_key_file` reports an absolute
-/// path that matches `$HOME/...`.
-#[test]
-fn load_expands_tilde_in_api_key_file_so_runtime_can_read_it() {
-    let (home, mut cmd) = common::cmd_with_tempdir_home();
-    let cfg_dir = home.path().join(".config").join("ferro-protect");
-    fs::create_dir_all(&cfg_dir).expect("mkdir");
-    let cfg_path = cfg_dir.join("config.toml");
-    fs::write(
-        &cfg_path,
-        "host = \"nvr.local\"\napi_key_file = \"~/keys/protect\"\n",
-    )
-    .expect("write");
-
-    let out = cmd
-        .args(["--json=true", "config", "show"])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let expected = home.path().join("keys").join("protect");
-    let got = show_value(&out.stdout, "api_key_file");
-    assert_eq!(got, expected.display().to_string(), "tilde not expanded");
-    assert!(!got.contains('~'), "tilde leaked through: {got}");
-}
-
 // ----------------- precedence + cross-source mutual exclusion -----------------
 
 #[test]
