@@ -934,3 +934,54 @@ re-export seam. All four gates green (`build`, `test --all`,
   *when* something happened (the prior spec-bump entries above, the
   "added in 7.1.60" note on the bulk-operation rewrite rule, the
   `update-spec` usage example in PLAN.md).
+
+## 2026-05-18 +0800 — Chore: TOML config file + `config` subcommand
+
+**Status**: complete (PR #10)
+
+**Summary**:
+Added a persistent on-disk config at
+`$XDG_CONFIG_HOME/ferro-protect/config.toml` (TOML) plus a
+`ferro-protect config {show, path, template}` subcommand. Field-level
+precedence is **flag > env > file > default**; file-discovery
+precedence (which file the loader opens) is independently
+`--config > UNIFI_PROTECT_CONFIG_FILE > XDG default`. Users hand-edit
+the TOML with `$EDITOR`; `config template` writes a commented-out
+scaffold; `config show` prints the merged values; `config path`
+prints the resolved path.
+
+**Decisions worth recording** (load-bearing for future spec / review work):
+
+- **Inline `api_key` in TOML is rejected, not just discouraged.** A
+  secret-bearing TOML field lands in commits, backups, dotfile syncs.
+  The loader short-circuits with a sanitized error (the offending TOML
+  line containing the secret never reaches stderr) and points users at
+  `UNIFI_PROTECT_API_KEY` for ad-hoc raw keys or `api_key_file` for a
+  pointer.
+- **Per-field source attribution dropped after review.** `config show`
+  prints `FIELD | VALUE` only; `FieldSource` / `Resolved<T>` were
+  internal scaffolding that the simplified surface no longer needs.
+  Cross-source `host` / `base_url` mutual exclusion moved into
+  `config::resolve` so a single check covers flag + env + file
+  combinations instead of needing a post-resolve guard in `main.rs`.
+- **`config show` ignores per-invocation flags besides `--config`.**
+  Reflecting `--insecure` etc. would mean `config show --insecure`
+  claims `true` for *this run*, which is misleading as "the effective
+  persisted config." The flag chain still applies to real commands.
+- **Live tests stay env-driven, not config-driven.** A developer with
+  a populated `config.toml` but no sourced `.env.local` sees `cargo
+  test --all` skip live tests rather than hit their real NVR. Teaching
+  the library's `live_client()` helper to also read the config file
+  would either layer-violate (library depending on the CLI crate) or
+  duplicate the TOML parser into library dev-deps.
+- **`--insecure` / `--json` use `Option<bool>` + `require_equals`.**
+  Before this chore they were plain `bool` with `env =`, which made
+  "not passed" indistinguishable from "explicit false." Now
+  `--json=true` / `--json=false` lets users explicitly clear a
+  file-set `json = true` for a single run.
+- **CLI integration tests scrub `UNIFI_PROTECT_*` env + XDG paths.**
+  A developer with a real config would otherwise have their personal
+  settings leak into assert_cmd-driven tests. Helpers live in
+  `crates/ferro-protect-cli/tests/common/mod.rs`.
+
+**Next**: Phase 5 (binary endpoints) is the next code work item.

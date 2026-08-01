@@ -79,6 +79,129 @@ ln -s ../../scripts/pre-commit .git/hooks/pre-commit
 chmod +x scripts/pre-commit
 ```
 
+## Configuration
+
+The CLI reads its configuration from up to four sources, in this
+priority order (highest first):
+
+1. **Command-line flag** — e.g. `--host nvr.local`.
+2. **Environment variable** — e.g. `UNIFI_PROTECT_HOST=nvr.local`.
+3. **TOML config file** — see below.
+4. **Built-in default**.
+
+### Config file location
+
+By default the CLI looks at
+`$XDG_CONFIG_HOME/ferro-protect/config.toml`, falling back to
+`$HOME/.config/ferro-protect/config.toml` if `XDG_CONFIG_HOME` is unset.
+On Windows the path is `%APPDATA%\ferro-protect\config.toml`.
+
+You can point at a different file two ways, in priority order:
+
+1. `--config <PATH>` flag.
+2. `UNIFI_PROTECT_CONFIG_FILE=<PATH>` env var.
+
+The flag and the env var are **authoritative**: pointing either at a
+missing file is a hard error. The XDG default is **opportunistic**: a
+missing file at that path just means "no config", which is fine.
+
+The env var name mirrors `UNIFI_PROTECT_API_KEY_FILE` — the `_FILE`
+suffix consistently means "path to a file" (as opposed to a raw
+value).
+
+### Pointing at a config file from a deployment
+
+`UNIFI_PROTECT_CONFIG_FILE=/etc/ferro-protect/config.toml` is the right
+hook for systemd units, Docker `ENV` directives, k8s ConfigMaps, and
+CI jobs — anywhere argv is awkward to control. Distinguish this from
+`UNIFI_PROTECT_API_KEY_FILE`, which points at a *key* file, not a
+*config* file.
+
+### Format
+
+```toml
+# Either set host or base_url, not both. host is the common case.
+host = "nvr.local"
+# base_url = "https://nvr.local/proxy/protect/integration"
+
+# Pointer to a separate key file. Use an absolute path -- `~` is not
+# expanded (TOML is not a shell). There is no inline `api_key` field;
+# use `UNIFI_PROTECT_API_KEY` for ad-hoc raw keys.
+api_key_file = "/home/you/.config/ferro-protect/api_key"
+
+insecure = false
+json = false
+log_level = "warn"  # one of: error, warn, info, debug, trace
+```
+
+Unknown keys are rejected at load time (typo guard). Setting both
+`host` and `base_url` is also rejected.
+
+### Managing the config file
+
+```sh
+ferro-protect config template            # write a commented-out scaffold to the config path
+ferro-protect config template --force    # overwrite an existing file
+ferro-protect config template --stdout   # print the scaffold; no file is written
+ferro-protect config show                # print effective non-secret config (field/value table)
+ferro-protect config show --json         # same fields as a JSON array — pipe through `jq`
+ferro-protect config path                # print the resolved config file path
+```
+
+`config show` deliberately omits the API key itself (even as a
+`<set>`/`<unset>` marker). A "no API key provided" error at runtime
+already explains the source ladder; shadowing it from `show` would
+only tempt users to grep for the value.
+
+Users hand-edit the TOML file with their preferred editor — there is
+no in-CLI editor, wizard, or delete. The deliberate trade-off was to
+keep the secret-handling surface (hidden-input pasting, key-file
+writing, per-field parsing, backup logic) out of the binary. To
+remove the file, `rm` it; to edit, open it in `$EDITOR`.
+
+`config show` and `config path` error when the resolved config file
+doesn't exist — they're file-inspection commands, so silently
+rendering defaults would be misleading. Run `config template` to
+bootstrap. Other subcommands (`info`, `cameras list`, …) still treat
+a missing XDG default as "no config" and fall back to env vars +
+flags as usual.
+
+There is **no CLI surface for writing the API key**, and **no inline
+`api_key` field** in the config file — the raw key would land in shell
+history, `ps`, the parent process's argv, or a versioned config file
+that ends up in commits, backups, and dotfile syncs. Use one of the
+safer paths:
+
+- `api_key_file = "<PATH>"` in the config file (point at a file the
+  shell will not log), or
+- `UNIFI_PROTECT_API_KEY_FILE=<PATH>` / `UNIFI_PROTECT_API_KEY=<KEY>`
+  env vars (only as visible to your shell session).
+
+### Config files and the test suite
+
+The library's **live tests are env-driven, not config-driven**, on
+purpose. Running `cargo test --all` with a populated
+`~/.config/ferro-protect/config.toml` but no sourced `.env.local`
+results in live tests **skipping** — they will not silently hit your
+real NVR just because a config file exists.
+
+CLI integration tests isolate themselves from the developer's config
+via `HOME=<tmpdir>` + scrubbed `UNIFI_PROTECT_*` env vars (see
+`crates/ferro-protect-cli/tests/common/mod.rs`). To run live tests
+with a config-file-only setup, source `.env.local` or set
+`UNIFI_PROTECT_HOST` plus an API-key source in the environment first.
+
+### Security notes
+
+The loader emits a stderr warning if a referenced `api_key_file` has
+lax permissions. `config template` writes its scaffold with mode 0600
+at creation on Unix (atomic temp-write + rename); the mode preserves
+the safety guarantee that previously held when this PR also supported
+inline `api_key` (a `--force` overwrite never widened visibility of a
+file that used to hold a secret).
+
+A future option would be keyring-backed storage; not built today.
+
 ## Running tests
 
 ### Quick start

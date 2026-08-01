@@ -157,7 +157,9 @@ pub async fn run(client: &ProtectClient, action: Action, json: bool) -> Result<(
             if json {
                 bail!(
                     "`cameras snapshot` produces binary JPEG output, which has no JSON \
-                     representation. Drop --json, or pipe the raw bytes (or use --out PATH)."
+                     representation. Disable JSON output for this invocation \
+                     (`--json=false`, or unset `UNIFI_PROTECT_JSON` / `json = false` in the \
+                     config), or use `--out PATH` to write the bytes to a file."
                 );
             }
             let id = CameraId::from(id);
