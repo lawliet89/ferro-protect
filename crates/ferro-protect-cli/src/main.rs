@@ -172,6 +172,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::viewers::Action,
     },
+    /// Device asset file endpoints (doorbell animations etc.).
+    Files {
+        #[command(subcommand)]
+        action: commands::files::Action,
+    },
     /// Inspect or scaffold the persistent TOML config file.
     Config {
         #[command(subcommand)]
@@ -277,6 +282,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Nvrs { action } => commands::nvrs::run(&client, action, json).await?,
         Command::Sensors { action } => commands::sensors::run(&client, action, json).await?,
         Command::Viewers { action } => commands::viewers::run(&client, action, json).await?,
+        Command::Files { action } => commands::files::run(&client, action, json).await?,
         Command::Config { .. } => unreachable!("handled above"),
     }
     Ok(())

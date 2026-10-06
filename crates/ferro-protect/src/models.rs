@@ -16,9 +16,16 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 pub use crate::generated::{
-    Camera, CameraId, ChannelQuality, Chime, ChimeId, DeviceState, Light, LightId, Liveview,
-    LiveviewId, Nvr, NvrId, ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer, ViewerId,
+    AssetFileType, Camera, CameraId, ChannelQuality, Chime, ChimeId, DeviceState, Light, LightId,
+    Liveview, LiveviewId, Nvr, NvrId, ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer,
+    ViewerId,
 };
+
+/// A device asset file (e.g. a doorbell animation), as returned by
+/// [`crate::FilesApi::list`]. The spec calls this schema `fileSchema`;
+/// it is renamed here because `FileSchema` reads like a description of
+/// a schema, not a file.
+pub use crate::generated::FileSchema as AssetFile;
 
 /// Optional query parameters for [`crate::CamerasApi::snapshot_with`].
 ///

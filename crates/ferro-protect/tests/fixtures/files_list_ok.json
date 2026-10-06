@@ -1,0 +1,23 @@
+[
+  {
+    "type": "animations",
+    "name": "4af06290-0fe5-11af-32b9-2b402c5e86ca.png",
+    "originalName": "welcome.png",
+    "path": "/srv/unifi-protect/storage/animations/4af06290-0fe5-11af-32b9-2b402c5e86ca.png",
+    "size": 0,
+    "createdAt": "2025-03-26T21:17:02.694Z",
+    "updatedAt": "2025-03-26T21:17:02.698Z",
+    "metadata": {},
+    "id": "67e46ece02b85103e40003f0"
+  },
+  {
+    "type": "animations",
+    "name": "e61ec460-3b3b-11af-09f8-c3a0e2de99f2.png.gif",
+    "path": "/srv/unifi-protect/storage/animations/e61ec460-3b3b-11af-09f8-c3a0e2de99f2.png.gif",
+    "size": 0,
+    "createdAt": "2025-03-26T21:17:02.748Z",
+    "updatedAt": "2025-03-26T21:17:02.750Z",
+    "metadata": {},
+    "id": "67e46ece02ec5103e40003f5"
+  }
+]
