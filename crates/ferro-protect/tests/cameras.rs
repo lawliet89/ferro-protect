@@ -22,6 +22,7 @@ use wiremock::matchers::{body_bytes, body_json, header, method, path, query_para
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const FIXTURE_EMPTY_LIST: &str = include_str!("fixtures/cameras_list_empty.json");
+const FIXTURE_LIST_OK: &str = include_str!("fixtures/cameras_list_ok.json");
 const FIXTURE_NOT_FOUND: &str = include_str!("fixtures/camera_not_found.json");
 
 async fn client_for(server: &MockServer) -> ProtectClient {
@@ -50,6 +51,33 @@ async fn list_returns_empty_vec_when_no_cameras() {
     let client = client_for(&server).await;
     let cameras = client.cameras().list().await.expect("list call succeeds");
     assert!(cameras.is_empty());
+}
+
+/// Sanitized capture from a 7.3.70 NVR. The doorbell carries `lcdMessage`;
+/// the G5 Flex omits the key entirely even though the spec marks it
+/// required -- see `DRIFTED_REQUIRED_FIELDS` in `build_support/spec_rewrite.rs`.
+#[tokio::test]
+async fn list_decodes_cameras_with_and_without_lcd_message() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/cameras"))
+        .and(header("x-api-key", "test-key"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(FIXTURE_LIST_OK)
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server).await;
+    let cameras = client.cameras().list().await.expect("list call succeeds");
+    assert_eq!(cameras.len(), 2);
+    assert_eq!(cameras[0].id.to_string(), "test-camera-doorbell");
+    assert!(cameras[0].lcd_message.is_some());
+    assert_eq!(cameras[1].id.to_string(), "test-camera-flex");
+    assert!(cameras[1].lcd_message.is_none());
 }
 
 #[tokio::test]

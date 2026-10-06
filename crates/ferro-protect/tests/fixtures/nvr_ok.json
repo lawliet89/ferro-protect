@@ -2,6 +2,9 @@
   "id": "test-nvr-1",
   "modelKey": "nvr",
   "name": "Test NVR",
+  "type": "UNVR-PRO",
+  "guid": null,
+  "mac": "24A43C3DFEB9",
   "doorbellSettings": {
     "defaultMessageText": "WELCOME",
     "defaultMessageResetTimeoutMs": 60000,

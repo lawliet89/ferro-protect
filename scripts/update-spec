@@ -28,9 +28,12 @@ git -C "$SUBMODULE" fetch --quiet origin
 git -C "$SUBMODULE" checkout --quiet origin/HEAD
 
 available_versions() {
-  find "$SPEC_DIR" -maxdepth 1 -type f -name '*.json' -printf '%f\n' \
-    | sed 's/\.json$//' \
-    | sort -V
+  # avoid GNU-only `find -printf` so this also runs on macOS
+  for f in "$SPEC_DIR"/*.json; do
+    [[ -f "$f" ]] || continue
+    f="${f##*/}"
+    echo "${f%.json}"
+  done | sort -V
 }
 
 if [[ $# -eq 0 ]]; then
@@ -97,5 +100,5 @@ submodule_sha="$(git -C "$SUBMODULE" rev-parse --short HEAD)"
 echo "Submodule now at: $submodule_sha"
 echo
 echo "Next steps:"
-echo "  git add third_party/unifi-apis $(realpath --relative-to="$REPO_ROOT" "$BUILD_RS")"
+echo "  git add third_party/unifi-apis ${BUILD_RS#"$REPO_ROOT"/}"
 echo "  git commit -m 'chore: bump Protect spec to $new_version'"

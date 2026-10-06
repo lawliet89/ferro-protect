@@ -13,12 +13,12 @@ not skip ahead.
 
 ## What we're building
 
-A Rust client library for the UniFi Protect API (version **7.1.77**, local API only, async) plus a CLI tool that exercises the library. Two crates in one Cargo workspace.
+A Rust client library for the UniFi Protect API (version **7.3.70**, local API only, async) plus a CLI tool that exercises the library. Two crates in one Cargo workspace.
 
 - **Library**: `ferro-protect` — async client, typed models, errors, WebSocket subscriptions.
 - **CLI**: `ferro-protect-cli` — `clap`-based binary that uses the library and serves as both a real tool and a living integration test.
 
-The OpenAPI 3.1 spec is published at <https://github.com/beezly/unifi-apis>. We consume it as a git submodule, not vendor a copy. The pinned version lives in `crates/ferro-protect/build.rs::SPEC_VERSION` and is currently `7.1.77`.
+The OpenAPI 3.1 spec is published at <https://github.com/beezly/unifi-apis>. We consume it as a git submodule, not vendor a copy. The pinned version lives in `crates/ferro-protect/build.rs::SPEC_VERSION` and is currently `7.3.70`.
 
 The seven invariants every phase must preserve (single `SPEC_VERSION`,
 `models.rs` seam, mechanical wrappers, `SecretString` everywhere, etc.)
@@ -542,7 +542,7 @@ rewrite in PR #8 — there is no per-permit task to remove anymore.
 ## Reference: spec source
 
 - Repo: <https://github.com/beezly/unifi-apis>
-- Path in submodule: `third_party/unifi-apis/unifi-protect/{SPEC_VERSION}.json` (currently `7.1.77.json`)
+- Path in submodule: `third_party/unifi-apis/unifi-protect/{SPEC_VERSION}.json` (currently `7.3.70.json`)
 - Format: OpenAPI 3.1.0; consumed as JSON Schema by typify with minor preprocessing (see phase 1)
 - Base URL pattern: `https://{nvr-host}/proxy/protect/integration` (spec server is `/integration`, paths begin with `/v1/...`)
 - Auth: `X-API-Key` request header

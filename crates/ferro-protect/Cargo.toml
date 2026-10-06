@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Async Rust client for the UniFi Protect local integration API (v7.1.77)."
+description = "Async Rust client for the UniFi Protect local integration API (v7.3.70)."
 build = "build.rs"
 
 [lints]
@@ -33,6 +33,7 @@ secrecy = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 url = { workspace = true }
+regress = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 
 [build-dependencies]
