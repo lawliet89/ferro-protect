@@ -28,12 +28,13 @@ git -C "$SUBMODULE" fetch --quiet origin
 git -C "$SUBMODULE" checkout --quiet origin/HEAD
 
 available_versions() {
-  # avoid GNU-only `find -printf` so this also runs on macOS
+  # avoid GNU-only `find -printf` and `sort -V` so this also runs on
+  # macOS; spec versions are always MAJOR.MINOR.PATCH
   for f in "$SPEC_DIR"/*.json; do
     [[ -f "$f" ]] || continue
     f="${f##*/}"
     echo "${f%.json}"
-  done | sort -V
+  done | sort -t. -k1,1n -k2,2n -k3,3n
 }
 
 if [[ $# -eq 0 ]]; then
