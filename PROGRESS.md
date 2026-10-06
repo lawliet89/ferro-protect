@@ -1043,3 +1043,32 @@ against a real 7.3.70 NVR.
   test NVR has none).
 - `drop_drifted_audio_detection_enum` still load-bearing
   (`smartDetectAudioTypes` present in 7.3.70).
+
+## 2026-10-06 — Chore: close out 7.3.70 loose ends
+
+**Status**: complete
+
+**Summary**:
+Followed up the open items from the 7.3.70 spec bump. Re-checked the
+rate-limit policy against the live 7.3.70 NVR: `RateLimit-Policy:
+"10-in-1sec"; q=10; w=1`, unchanged from 7.1.77, so the default
+`RateLimitConfig` stays as is and only the version citations moved.
+Ran `cargo deny check` (advisories, bans, licenses, sources all ok).
+Scheduled the new POS transaction endpoint in PLAN.md.
+
+**Files changed**:
+- `crates/ferro-protect/src/client.rs`, `crates/ferro-protect/src/rate_limit.rs`,
+  `ARCHITECTURE.md`, `README.md`: rate-limit policy cited as 7.3.70.
+- `PLAN.md`: Phase 9 item 6, `cameras pos-transaction <id>`
+  (`POST /v1/pos/cameras/{id}/transactions`), with its 409 /
+  `externalId` semantics noted.
+
+**Decisions / deviations**:
+- POS ingestion goes in Phase 9 (actions), not Phase 8 (CRUD): it records
+  an event rather than editing an entity's configuration.
+- Lights, sensors, and viewers remain untested against live data. The
+  test NVR has none of them, and there is nothing to do here until one is
+  available.
+
+**Next**: Phase 6 (files list). Its first commit should also backfill the
+missing Phase 5 entry in this log.
