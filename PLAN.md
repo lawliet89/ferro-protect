@@ -392,8 +392,9 @@ Order:
 3. `cameras ptz-patrol-start <id> --slot <n>`.
 4. `cameras ptz-patrol-stop <id>`.
 5. `alarm trigger <id>` — POST `/v1/alarm-manager/webhook/{id}`.
+6. `cameras pos-transaction <id>` — POST `/v1/pos/cameras/{id}/transactions` (added in 7.3.70). Unlike the others this one has a body (`posTransactionRequest`) and returns `posTransactionResponse`. A 409 means a transaction with the same `externalId` is still being processed for that camera; surface it as a distinct, retry-later error rather than a generic API error. Do not auto-retry it: `retry_on_mutations=false` still applies. The live test records a camera event on the NVR, so gate it like the other `live_write_*` tests.
 
-These are simple — no body shape complexity. One commit covering all action endpoints is fine, or split if any one of them is unusually complex. Tests: mocked + `assert_cmd` as always. Live tests for these are all `live_write_*` (they cause physical effects). Implement them but expect them to be exercised rarely; the mutation gate is the safety belt.
+Items 1–5 are simple — no body shape complexity. One commit covering them is fine; give item 6 its own commit. Tests: mocked + `assert_cmd` as always. Live tests for these are all `live_write_*` (they cause physical effects). Implement them but expect them to be exercised rarely; the mutation gate is the safety belt.
 
 ---
 
