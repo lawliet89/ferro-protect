@@ -985,3 +985,61 @@ prints the resolved path.
   `crates/ferro-protect-cli/tests/common/mod.rs`.
 
 **Next**: Phase 5 (binary endpoints) is the next code work item.
+
+## 2026-10-06 — Spec bump: 7.1.77 → 7.3.70
+
+**Status**: complete
+
+**Summary**:
+Bumped `SPEC_VERSION` in `crates/ferro-protect/build.rs` to `7.3.70`
+via `scripts/update-spec 7.3.70`. The submodule pointer already
+carried `7.3.70.json`, so it did not move. Build, `test --all`, and
+`clippy -D warnings` green; `deny check` not run (cargo-deny not
+installed on the machine used). All 17 read-only live tests pass
+against a real 7.3.70 NVR.
+
+**Spec delta (7.1.77 → 7.3.70)**:
+- One new path: `POST /v1/pos/cameras/{id}/transactions` (not wrapped).
+- No changes to any existing operation.
+- 14 new component schemas (tamper / digital-input events, fob keypad
+  and arm settings, link-station thread state, POS transactions,
+  `deviceGuid`, `deviceType`, `nvrGuid`, `nvrType`,
+  `sensorFeatureFlags`, ...).
+- Every device schema gained required-but-nullable `guid` and `type`;
+  `nvr` also gained required `mac`; `sensor` gained optional
+  `featureFlags`.
+- String `pattern` constraints now appear, so typify-generated code
+  depends on `regress` at runtime.
+
+**Files changed**:
+- `crates/ferro-protect/build.rs` (SPEC_VERSION constant)
+- `Cargo.toml`, `crates/ferro-protect/Cargo.toml`: added `regress`
+  (0.10, matching typify's own dependency).
+- `crates/ferro-protect/build_support/spec_rewrite.rs`: new
+  `relax_drifted_required_fields` rule driven by
+  `DRIFTED_REQUIRED_FIELDS`.
+- `crates/ferro-protect/tests/cameras.rs` +
+  `fixtures/cameras_list_ok.json`: first populated camera fixture
+  (sanitized live capture: one doorbell, one non-doorbell).
+- `crates/ferro-protect/tests/fixtures/nvr_ok.json`: added `type`,
+  `guid`, `mac`.
+- Version-string references updated to `7.3.70` across `lib.rs`,
+  `Cargo.toml`, `tests/rate_limit.rs`, `README.md`, `PLAN.md`.
+- `scripts/update-spec`: replaced GNU-only `find -printf` and
+  `realpath --relative-to` so it runs on macOS and Linux.
+- `Cargo.lock`: `cargo update` (semver-compatible only).
+
+**Decisions / deviations**:
+- `camera.lcdMessage` is required in the spec (7.1.77 and 7.3.70) but
+  firmware 7.3.70 omits it for every non-doorbell camera, which broke
+  all camera calls. Relaxed to optional via the new
+  `DRIFTED_REQUIRED_FIELDS` table rather than a one-off rule, so
+  future drift is a one-line addition.
+- Rate-limit doc annotations (`client.rs`, `rate_limit.rs`,
+  `ARCHITECTURE.md`) still cite `7.1.77`: the `RateLimit-Policy` value
+  comes from live response headers, not the spec, and has not been
+  re-checked on 7.3.70.
+- Lights, sensors, and viewers are untested against live data (the
+  test NVR has none).
+- `drop_drifted_audio_detection_enum` still load-bearing
+  (`smartDetectAudioTypes` present in 7.3.70).

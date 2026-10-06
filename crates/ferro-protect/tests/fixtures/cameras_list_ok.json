@@ -1,0 +1,144 @@
+[
+  {
+    "id": "test-camera-doorbell",
+    "modelKey": "camera",
+    "state": "CONNECTED",
+    "name": "Front Door",
+    "type": "UVC G4 Doorbell Pro",
+    "guid": "00000000-0000-4000-8000-000000000001",
+    "mac": "AABBCCDDEE01",
+    "isMicEnabled": true,
+    "osdSettings": {
+      "isNameEnabled": false,
+      "isDateEnabled": true,
+      "isLogoEnabled": false,
+      "isDebugEnabled": false,
+      "overlayLocation": "topLeft"
+    },
+    "ledSettings": {
+      "isEnabled": true,
+      "welcomeLed": true,
+      "floodLed": true
+    },
+    "lcdMessage": {
+      "type": "IMAGE",
+      "resetAt": null,
+      "text": "test-image.png"
+    },
+    "micVolume": 100,
+    "activePatrolSlot": null,
+    "videoMode": "default",
+    "hdrType": "on",
+    "featureFlags": {
+      "supportFullHdSnapshot": true,
+      "hasHdr": true,
+      "smartDetectTypes": [
+        "person",
+        "vehicle",
+        "animal",
+        "face",
+        "licensePlate",
+        "package"
+      ],
+      "smartDetectAudioTypes": [
+        "alrmSmoke",
+        "alrmCmonx",
+        "alrmSiren",
+        "alrmBabyCry",
+        "alrmSpeak",
+        "alrmBurglar",
+        "alrmCarHorn",
+        "alrmBark",
+        "alrmGlassBreak"
+      ],
+      "videoModes": [
+        "default",
+        "sport",
+        "slowShutter"
+      ],
+      "hasMic": true,
+      "hasLedStatus": true,
+      "hasSpeaker": true
+    },
+    "smartDetectSettings": {
+      "objectTypes": [
+        "person",
+        "vehicle",
+        "animal",
+        "face",
+        "licensePlate",
+        "package"
+      ],
+      "audioTypes": []
+    },
+    "hasPackageCamera": true
+  },
+  {
+    "id": "test-camera-flex",
+    "modelKey": "camera",
+    "state": "CONNECTED",
+    "name": "Garage",
+    "type": "UVC G5 Flex",
+    "guid": "00000000-0000-4000-8000-000000000002",
+    "mac": "AABBCCDDEE02",
+    "isMicEnabled": true,
+    "osdSettings": {
+      "isNameEnabled": false,
+      "isDateEnabled": true,
+      "isLogoEnabled": false,
+      "isDebugEnabled": false,
+      "overlayLocation": "topLeft"
+    },
+    "ledSettings": {
+      "isEnabled": false,
+      "welcomeLed": true,
+      "floodLed": true
+    },
+    "micVolume": 100,
+    "activePatrolSlot": null,
+    "videoMode": "default",
+    "hdrType": "auto",
+    "featureFlags": {
+      "supportFullHdSnapshot": false,
+      "hasHdr": true,
+      "smartDetectTypes": [
+        "person",
+        "vehicle",
+        "animal",
+        "face",
+        "licensePlate"
+      ],
+      "smartDetectAudioTypes": [
+        "alrmSmoke",
+        "alrmCmonx",
+        "alrmSiren",
+        "alrmBabyCry",
+        "alrmSpeak",
+        "alrmBurglar",
+        "alrmCarHorn",
+        "alrmBark",
+        "alrmGlassBreak"
+      ],
+      "videoModes": [
+        "default",
+        "sport",
+        "slowShutter"
+      ],
+      "hasMic": true,
+      "hasLedStatus": true,
+      "hasSpeaker": false
+    },
+    "smartDetectSettings": {
+      "objectTypes": [
+        "person",
+        "vehicle",
+        "animal",
+        "face",
+        "licensePlate",
+        "package"
+      ],
+      "audioTypes": []
+    },
+    "hasPackageCamera": false
+  }
+]

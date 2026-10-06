@@ -1,7 +1,7 @@
 # ferro-protect
 
 Async Rust client and CLI for the [UniFi Protect](https://ui.com/) local integration
-API. Targets Protect application version **7.1.77**. The workspace publishes two
+API. Targets Protect application version **7.3.70**. The workspace publishes two
 crates: the `ferro-protect` library and the `ferro-protect-cli` binary
 (`ferro-protect`).
 

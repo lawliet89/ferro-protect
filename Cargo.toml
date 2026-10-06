@@ -35,6 +35,8 @@ predicates = "3"
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["rustls-tls-webpki-roots"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 typify = "0.4"
+# runtime dep of typify-generated code for schemas with `pattern`
+regress = "0.10"
 schemars = "0.8"
 syn = { version = "2", features = ["full"] }
 prettyplease = "0.2"

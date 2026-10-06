@@ -12,6 +12,7 @@
 pub fn rewrite(raw: serde_json::Value) -> serde_json::Value {
     let mut value = raw;
     lift_inline_one_or_array_refs(&mut value);
+    relax_drifted_required_fields(&mut value);
     preprocess_for_typify(&mut value);
     value
 }
@@ -163,6 +164,26 @@ fn drop_drifted_audio_detection_enum(map: &mut serde_json::Map<String, serde_jso
         .any(|value| value.as_str() == Some("alrmCmonx"))
     {
         map.remove("enum");
+    }
+}
+
+/// `(schema, property)` pairs the spec marks `required` but real NVRs omit.
+///
+/// - `camera.lcdMessage`: only doorbells carry an LCD; firmware 7.3.70
+///   omits the key entirely for every other camera model (confirmed live
+///   2026-10 against an AI Pro, G5 Flex and G6 Instant). Left required,
+///   `cameras().list()` fails to decode on any NVR with a non-doorbell
+///   camera.
+const DRIFTED_REQUIRED_FIELDS: &[(&str, &str)] = &[("camera", "lcdMessage")];
+
+/// Drop the [`DRIFTED_REQUIRED_FIELDS`] entries from their schema's
+/// `required` list so typify generates them as `Option<_>`.
+fn relax_drifted_required_fields(value: &mut serde_json::Value) {
+    for (schema, property) in DRIFTED_REQUIRED_FIELDS {
+        let pointer = format!("/components/schemas/{schema}/required");
+        if let Some(serde_json::Value::Array(required)) = value.pointer_mut(&pointer) {
+            required.retain(|name| name.as_str() != Some(property));
+        }
     }
 }
 
