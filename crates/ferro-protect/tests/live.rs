@@ -457,3 +457,24 @@ async fn live_read_cameras_talkback_session() {
         first.id, session.codec, session.sampling_rate, session.bits_per_sample
     );
 }
+
+#[tokio::test]
+async fn live_read_files_list() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_files_list: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    let files = client
+        .files()
+        .list(ferro_protect::models::AssetFileType::Animations)
+        .await
+        .expect("files list call succeeded");
+    println!(
+        "live_read_files_list: {} animation file(s) returned",
+        files.len()
+    );
+    for f in &files {
+        assert_eq!(f.type_, ferro_protect::models::AssetFileType::Animations);
+        println!("  - {} ({})", f.name.as_str(), f.path.as_str());
+    }
+}

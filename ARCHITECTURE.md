@@ -199,6 +199,7 @@ The current state. Updated whenever the structure changes.
 | [src/generated.rs](crates/ferro-protect/src/generated.rs) | A permissive `#![allow(...)]` block and `include!(concat!(env!("OUT_DIR"), "/generated.rs"))`. Declared as a private `mod generated;` in `lib.rs`; only `models.rs` re-exports from it. |
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
 | [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
+| [src/files.rs](crates/ferro-protect/src/files.rs) | `FilesApi<'a>` (list by `AssetFileType`). Upload lands in phase 10. |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
 | [tests/rate_limit.rs](crates/ferro-protect/tests/rate_limit.rs) | Mocked integration test for the retry middleware (Retry-After honoured, retry budget exhaustion) and proactive throttle (burst capped to configured capacity). |
 | [tests/live.rs](crates/ferro-protect/tests/live.rs) | Live tests against a real NVR. Auto-skip when env absent. |

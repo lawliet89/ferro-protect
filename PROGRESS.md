@@ -875,6 +875,51 @@ limiter shared across `http_read` / `http_write`.
 work item. PR #6 still needs to land into `main`; this chore tightens
 the implementation that PR ships.
 
+## 2026-06-09 17:18 +0800 — Phase 5: binary endpoints
+
+**Status**: complete (entry backfilled 2026-10-06 from the PR #9
+description; the entry was not written when phase 6 began)
+
+**Summary**:
+Three camera endpoints, one commit each, merged as `e02db23` (#9):
+`cameras snapshot` (`GET /v1/cameras/{id}/snapshot` → JPEG `Bytes`),
+`cameras rtsps` (`POST /v1/cameras/{id}/rtsps-stream` →
+`Vec<RtspsStream>` ordered by request), and `cameras talkback`
+(`POST /v1/cameras/{id}/talkback-session` → `TalkbackSession` with the
+`rtp://` URL and codec config). Live-tested against a 7.1.77 NVR.
+
+**Files added/changed**:
+- `crates/ferro-protect/src/cameras.rs`: `snapshot`, `snapshot_with`,
+  `rtsps_stream`, `talkback_session`.
+- `crates/ferro-protect/src/models.rs`: `SnapshotOptions`,
+  `RtspsStream`, hand-written `TalkbackSession`.
+- `crates/ferro-protect/src/client.rs`: `get_bytes`, `post_json_retriable`,
+  `post_empty_json_retriable`, and the `http_retriable` /
+  `http_mutating` client split.
+- `crates/ferro-protect-cli/src/commands/cameras.rs`: `snapshot`,
+  `rtsps`, `talkback` subcommands (`is-terminal` guard on snapshot).
+- Mocked tests in `tests/cameras.rs`; `live_read_cameras_snapshot`,
+  `live_read_cameras_rtsps_stream`,
+  `live_read_cameras_talkback_session` in `tests/live.rs`.
+
+**Decisions / deviations**:
+- **Read-shaped POSTs.** rtsps-stream and talkback-session are POSTs but
+  change no persistent NVR state, so they keep the `live_read_*` names,
+  skip the mutation gate, and retry like reads. The two internal clients
+  are named by contract, not verb: `http_retriable` (GETs + read-shaped
+  POSTs, always retries) and `http_mutating` (no retry unless
+  `retry_on_mutations`). A retry at worst leaves a redundant short-lived
+  session the server reaps.
+- **`RtspsStream` flattening.** The wire's one-optional-field-per-quality
+  object becomes a `Vec` in request order, dropping unpopulated
+  qualities.
+- **`TalkbackSession` hand-written** to avoid typify's per-field newtype
+  wrappers; same approach as `ApplicationInfo`.
+- **One commit per endpoint** (PLAN.md left it open).
+- The matching rtsps-stream DELETE belongs with the mutation phases.
+
+**Next**: Phase 6 (files list).
+
 ## 2026-06-09 — Spec bump: 7.1.60 → 7.1.77
 
 **Status**: complete
