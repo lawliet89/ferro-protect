@@ -1117,3 +1117,30 @@ Scheduled the new POS transaction endpoint in PLAN.md.
 
 **Next**: Phase 6 (files list). Its first commit should also backfill the
 missing Phase 5 entry in this log.
+
+## 2026-10-08 21:27 +0800 — Chore: keep secrets out of CI guard logs; insecure TLS opt-in
+
+**Status**: complete
+
+**Summary**:
+The CI "Forbid live-NVR env vars" step dumped full `NAME=value` pairs
+when it tripped. A `UNIFI_PROTECT_API_KEY` set as a repository
+*variable* (unmasked, unlike secrets) would then land in a public job
+log -- the exact misconfiguration the guard exists to catch. It now
+prints names only. Separately, `.env.example` shipped
+`UNIFI_PROTECT_INSECURE=1` active, so copying the template silently
+disabled TLS verification for both the CLI and live tests; it is now
+commented out with guidance to opt in only for an unpinnable
+self-signed certificate. Same fix as lawliet89/ferro-network PR #1
+(`7fa85e8`).
+
+**Files added/changed**:
+- `.github/workflows/ci.yml`
+- `.env.example`
+- `README.md` (`UNIFI_PROTECT_INSECURE` row)
+
+**Decisions / deviations**:
+- Verified locally: `UNIFI_PROTECT_API_KEY=supersecret bash -c "<step>"`
+  prints only `UNIFI_PROTECT_API_KEY` and exits 1; a clean env exits 0.
+
+**Next**: resume Phase 7 (WebSocket subscriptions).
