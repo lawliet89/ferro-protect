@@ -270,7 +270,7 @@ All prefixed `UNIFI_PROTECT_` to make accidental activation impossible:
 | `UNIFI_PROTECT_HOST` | NVR hostname or `host:port` -- **no scheme prefix**. The client always wraps this as `https://{host}/proxy/protect/integration`. **Required.** Absence means all live tests skip. |
 | `UNIFI_PROTECT_API_KEY_FILE` | Path to a file containing the API key. **Preferred over the raw env var below.** |
 | `UNIFI_PROTECT_API_KEY` | Raw API key. Use only if the file form is impractical. |
-| `UNIFI_PROTECT_INSECURE` | Set to a non-empty value to accept self-signed TLS (common on home NVRs). |
+| `UNIFI_PROTECT_INSECURE` | Set to a non-empty value to skip TLS certificate verification. Off in `.env.example`; opt in only for a self-signed NVR certificate you cannot pin (`TlsMode::Pinned` is the safer alternative). |
 | `UNIFI_PROTECT_ALLOW_MUTATIONS` | Set to `1` to also run `live_write_*` tests. See below. |
 | `UNIFI_PROTECT_LOG` | Log filter for the CLI (env_logger syntax). Overridden by `--log-level`; falls back to `RUST_LOG`, then `warn`. Logs go to stderr. |
 

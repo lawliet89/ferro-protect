@@ -38,7 +38,9 @@ jobs:
         run: |
           if env | grep -q '^UNIFI_PROTECT_'; then
             echo "::error::UNIFI_PROTECT_* env vars must not be set in CI" >&2
-            env | grep '^UNIFI_PROTECT_' >&2 || true
+            # Names only: values may be API keys, and repository variables
+            # (unlike secrets) are not masked in job logs.
+            env | grep '^UNIFI_PROTECT_' | cut -d= -f1 >&2 || true
             exit 1
           fi
 
