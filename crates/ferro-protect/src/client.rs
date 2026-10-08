@@ -92,7 +92,7 @@ pub struct ProtectClient {
     /// session, which the server reaps on its own. Always wraps the
     /// retry middleware so a transient 429/5xx is transparently
     /// recovered.
-    http_retriable: ClientWithMiddleware,
+    pub(crate) http_retriable: ClientWithMiddleware,
     /// Used for genuine mutations (PATCH/DELETE, and the mutating
     /// POSTs that land in phase 8). Bypasses the retry middleware by
     /// default so a transient 5xx after the server already applied the
@@ -224,7 +224,7 @@ impl ProtectClient {
         Err(Error::from_response(response).await)
     }
 
-    fn url(&self, path: &str) -> Result<Url> {
+    pub(crate) fn url(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path.trim_start_matches('/'))
             .map_err(|e| Error::InvalidUrl(format!("{path}: {e}")))
@@ -353,7 +353,12 @@ impl ProtectClientBuilder {
             TlsMode::AcceptInvalid => "accept-invalid (insecure!)",
         };
 
+        // HTTP/1.1 only: the WebSocket subscriptions upgrade a regular
+        // request, which an HTTP/2 connection cannot do. Pinned
+        // explicitly so a downstream crate enabling reqwest's `http2`
+        // feature cannot switch it on through ALPN.
         let mut reqwest_builder = reqwest::ClientBuilder::new()
+            .http1_only()
             .default_headers(headers)
             .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
             .timeout(DEFAULT_TOTAL_TIMEOUT);

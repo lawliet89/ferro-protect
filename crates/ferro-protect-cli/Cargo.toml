@@ -23,7 +23,8 @@ workspace = true
 ferro-protect = { path = "../ferro-protect", version = "0.1.0", features = ["insecure-tls"] }
 clap = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+futures-util = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -38,6 +39,8 @@ is-terminal = { workspace = true }
 [dev-dependencies]
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true, features = ["sink"] }
 wiremock = { workspace = true }
 tempfile = { workspace = true }

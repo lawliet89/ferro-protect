@@ -49,6 +49,7 @@ mod rate_limit;
 mod retry;
 mod sensors;
 mod viewers;
+mod ws;
 
 pub use cameras::CamerasApi;
 pub use chimes::ChimesApi;
@@ -61,3 +62,4 @@ pub use nvrs::NvrsApi;
 pub use rate_limit::RateLimitConfig;
 pub use sensors::SensorsApi;
 pub use viewers::ViewersApi;
+pub use ws::{SubscribeApi, Subscription};

@@ -35,6 +35,8 @@ log = { workspace = true }
 url = { workspace = true }
 regress = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
@@ -46,6 +48,8 @@ prettyplease = { workspace = true }
 [dev-dependencies]
 insta = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util", "net"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true, features = ["sink"] }
 wiremock = { workspace = true }
 secrecy = { workspace = true }

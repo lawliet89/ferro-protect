@@ -125,9 +125,10 @@ keep using `models::Liveview` and never notice.
 ### Wrappers stay mechanical
 
 Every wrapper method is a thin shim around shared HTTP helpers on
-`ProtectClient` (`get_json`, `post_json`, `patch_json`, `get_bytes`) and
-returns a `models::*` type. URL joining, JSON decoding, byte responses, and
-non-2xx error mapping stay in those helpers.
+`ProtectClient` (`get_json`, `post_json`, `patch_json`, `get_bytes`,
+`open_subscription`) and returns a `models::*` type. URL joining, JSON
+decoding, byte responses, and non-2xx error mapping stay in those
+helpers.
 
 ### Single source of truth for the spec version
 
@@ -200,7 +201,9 @@ The current state. Updated whenever the structure changes.
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
 | [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
 | [src/files.rs](crates/ferro-protect/src/files.rs) | `FilesApi<'a>` (list by `AssetFileType`). Upload lands in phase 10. |
+| [src/ws.rs](crates/ferro-protect/src/ws.rs) | `SubscribeApi<'a>` (devices + events) and `Subscription<T>`, a `Stream` of decoded WebSocket messages. See [WebSocket subscriptions](#websocket-subscriptions). |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
+| [tests/subscribe.rs](crates/ferro-protect/tests/subscribe.rs) | Subscription tests against a one-connection `tokio-tungstenite` server (wiremock cannot complete an upgrade), plus a wiremock 401 for the refused upgrade. |
 | [tests/rate_limit.rs](crates/ferro-protect/tests/rate_limit.rs) | Mocked integration test for the retry middleware (Retry-After honoured, retry budget exhaustion) and proactive throttle (burst capped to configured capacity). |
 | [tests/live.rs](crates/ferro-protect/tests/live.rs) | Live tests against a real NVR. Auto-skip when env absent. |
 | [tests/common/mod.rs](crates/ferro-protect/tests/common/mod.rs) | `live_client() -> Option<ProtectClient>`, `mutations_allowed() -> bool`. Pulled in by each live test via `mod common;`. |
@@ -235,8 +238,11 @@ A single public `Error` enum lives in [`src/error.rs`](crates/ferro-protect/src/
 ```rust
 pub enum Error {
     Http(reqwest::Error),           // transport-level failure
+    Middleware(String),             // retry/rate-limit middleware failure
     Api { status, code, message },  // server returned an error response
     Json(serde_json::Error),        // response body didn't match schema
+    SubscriptionRejected { code, message }, // error document sent over a WebSocket
+    WebSocket(String),              // WebSocket transport/protocol failure
     InvalidUrl(String),
     MissingApiKey,
     Other(String),
@@ -311,6 +317,38 @@ because it ignores `Retry-After` — its built-in
 regardless of what the server says. The custom middleware in
 `retry.rs` is small (~120 lines) and means we read the server's
 `retry-after: 1` and actually wait 1s.
+
+---
+
+## WebSocket subscriptions
+
+[`src/ws.rs`](crates/ferro-protect/src/ws.rs) serves
+`/v1/subscribe/devices` and `/v1/subscribe/events`.
+
+- **Handshake through reqwest.** The upgrade is an ordinary GET on
+  `http_retriable` with the WebSocket headers; the upgraded connection
+  is handed to `tokio-tungstenite` (`from_raw_socket`). The socket
+  therefore inherits the client's TLS mode, `X-API-Key` header, and
+  rate limiter with no second TLS stack. The reqwest client is pinned
+  `http1_only` because an HTTP/2 connection cannot be upgraded.
+- **Framing.** One JSON document per text frame, observed on 7.3.70.
+  Device updates are partial: `id`, `modelKey`, and only the changed
+  fields.
+- **Message types.** `models::DeviceMessage` and
+  `models::EventMessage` are hand-written `type`-tagged enums whose
+  items are generated types; the spec's shapes for these (an `anyOf`
+  of two `oneOf`s, and an inline operation schema) do not come out of
+  typify usefully.
+- **In-band rejection.** Protect can accept the upgrade (101) and then
+  send an error document as a frame before closing. Rate limiting
+  works this way: the handshake counts against the 10-per-second
+  budget, but the 429 is never an HTTP status, so the retry middleware
+  cannot see it. Such frames surface as `Error::SubscriptionRejected`.
+- **Stream contract.** A frame that fails to decode yields
+  `Err(Error::Json)` and the stream continues; a transport failure
+  yields one `Err(Error::WebSocket)` and ends it; a server close ends
+  it cleanly. `Subscription::close` sends a close frame and waits up to
+  5 seconds for the echo.
 
 ---
 

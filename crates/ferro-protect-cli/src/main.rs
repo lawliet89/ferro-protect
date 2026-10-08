@@ -177,6 +177,11 @@ enum Command {
         #[command(subcommand)]
         action: commands::files::Action,
     },
+    /// Stream live WebSocket updates as NDJSON.
+    Subscribe {
+        #[command(subcommand)]
+        action: commands::subscribe::Action,
+    },
     /// Inspect or scaffold the persistent TOML config file.
     Config {
         #[command(subcommand)]
@@ -283,6 +288,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Sensors { action } => commands::sensors::run(&client, action, json).await?,
         Command::Viewers { action } => commands::viewers::run(&client, action, json).await?,
         Command::Files { action } => commands::files::run(&client, action, json).await?,
+        Command::Subscribe { action } => commands::subscribe::run(&client, action).await?,
         Command::Config { .. } => unreachable!("handled above"),
     }
     Ok(())
