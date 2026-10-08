@@ -24,6 +24,8 @@ const DEFAULT_MAX_RETRIES: u32 = 3;
 const DEFAULT_RETRY_INITIAL_BACKOFF: Duration = Duration::from_millis(200);
 const DEFAULT_RETRY_MAX_BACKOFF: Duration = Duration::from_secs(5);
 
+const DEFAULT_SUBSCRIPTION_KEEPALIVE: Duration = Duration::from_secs(30);
+
 /// Controls how the underlying TLS stack validates the NVR's certificate.
 ///
 /// `Native` uses the OS or webpki-bundled trust store and is the safe
@@ -102,6 +104,8 @@ pub struct ProtectClient {
     /// shared budget as reads.
     http_mutating: ClientWithMiddleware,
     base_url: Url,
+    /// Ping interval for WebSocket subscriptions; `None` disables it.
+    pub(crate) subscription_keepalive: Option<Duration>,
 }
 
 impl ProtectClient {
@@ -249,6 +253,10 @@ pub struct ProtectClientBuilder {
     retry_on_mutations: bool,
     rate_limit: Option<RateLimitConfig>,
     rate_limit_overridden: bool,
+    subscription_keepalive: Option<Duration>,
+    /// Whether `subscription_keepalive` was called; if not, the default
+    /// applies (same pattern as `rate_limit_overridden`).
+    subscription_keepalive_overridden: bool,
 }
 
 impl ProtectClientBuilder {
@@ -318,16 +326,31 @@ impl ProtectClientBuilder {
         self
     }
 
+    /// Set how often WebSocket subscriptions ping the server.
+    /// `Some(period)` pings every `period` and ends a subscription
+    /// with `Error::WebSocket` after two periods without any frame
+    /// from the server. `None` disables both.
+    ///
+    /// The default is a 30-second ping. It keeps a quiet subscription
+    /// from being dropped as idle and detects dead connections.
+    #[must_use]
+    pub const fn subscription_keepalive(mut self, period: Option<Duration>) -> Self {
+        self.subscription_keepalive = period;
+        self.subscription_keepalive_overridden = true;
+        self
+    }
+
     /// Finalise the builder.
     ///
     /// # Errors
     /// - [`Error::MissingApiKey`] when no API key was supplied.
     /// - [`Error::InvalidUrl`] when neither `host` nor `base_url` was set,
     ///   or when the constructed URL parses as invalid.
-    /// - [`Error::Other`] for invalid header values or TLS configuration
-    ///   failures.
+    /// - [`Error::Other`] for invalid header values, TLS configuration
+    ///   failures, or a zero subscription keepalive period.
     /// - [`Error::Http`] for `reqwest` builder failures.
     pub fn build(self) -> Result<ProtectClient> {
+        let subscription_keepalive = self.resolved_subscription_keepalive()?;
         let api_key = self.api_key.ok_or(Error::MissingApiKey)?;
         let base_url_raw = match (self.base_url, self.host) {
             (Some(url), _) => url,
@@ -438,13 +461,30 @@ impl ProtectClientBuilder {
             self.retry_on_mutations,
         );
         debug!(
-            "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}"
+            "client timeouts: connect={DEFAULT_CONNECT_TIMEOUT:?}, total={DEFAULT_TOTAL_TIMEOUT:?}, subscription keepalive={subscription_keepalive:?}"
         );
         Ok(ProtectClient {
             http_retriable,
             http_mutating,
             base_url,
+            subscription_keepalive,
         })
+    }
+}
+
+impl ProtectClientBuilder {
+    fn resolved_subscription_keepalive(&self) -> Result<Option<Duration>> {
+        let keepalive = if self.subscription_keepalive_overridden {
+            self.subscription_keepalive
+        } else {
+            Some(DEFAULT_SUBSCRIPTION_KEEPALIVE)
+        };
+        if keepalive == Some(Duration::ZERO) {
+            return Err(Error::Other(
+                "subscription keepalive period must be non-zero; pass None to disable".into(),
+            ));
+        }
+        Ok(keepalive)
     }
 }
 

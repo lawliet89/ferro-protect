@@ -18,6 +18,9 @@ default = []
 # default because it disables certificate validation; only useful for
 # testing or for self-signed NVRs you cannot pin a cert for.
 insecure-tls = []
+# Enables SubscribeApi::{devices,events}_reconnecting: subscriptions
+# that reconnect with exponential backoff after a drop.
+reconnect = []
 
 [dependencies]
 reqwest = { workspace = true }
@@ -36,7 +39,7 @@ url = { workspace = true }
 regress = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
+futures-util = { workspace = true, features = ["sink"] }
 
 [build-dependencies]
 serde_json = { workspace = true }

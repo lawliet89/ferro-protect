@@ -15,6 +15,7 @@
 //! refused-upgrade path still uses wiremock.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use ferro_protect::models::{
     Device, DeviceAdded, DeviceMessage, DevicePartialWithReference, DeviceRemoved, DeviceState,
@@ -47,6 +48,7 @@ struct Seen {
     path: String,
     api_key: Option<String>,
     client_sent_close: bool,
+    pings: usize,
 }
 
 enum Ending {
@@ -56,6 +58,11 @@ enum Ending {
     AwaitClient,
     /// Drop the TCP connection without a close handshake.
     Drop,
+    /// Keep reading (so pings get answered) for this long, counting
+    /// pings, then close.
+    CountPings(Duration),
+    /// Hold the connection without reading, so pings go unanswered.
+    Stall(Duration),
 }
 
 /// Accept one WebSocket connection, send `frames` as text messages,
@@ -88,6 +95,22 @@ async fn ws_server(frames: Vec<String>, ending: Ending) -> (String, JoinHandle<S
             Ending::Drop => {
                 drop(ws);
             }
+            Ending::CountPings(duration) => {
+                let count = async {
+                    while let Some(msg) = ws.next().await {
+                        if matches!(msg, Ok(Message::Ping(_))) {
+                            seen.lock().unwrap().pings += 1;
+                        }
+                    }
+                };
+                let _ = tokio::time::timeout(duration, count).await;
+                ws.close(None).await.expect("close");
+                while ws.next().await.is_some() {}
+            }
+            Ending::Stall(duration) => {
+                tokio::time::sleep(duration).await;
+                drop(ws);
+            }
             Ending::Close | Ending::AwaitClient => {
                 if matches!(ending, Ending::Close) {
                     ws.close(None).await.expect("close");
@@ -105,9 +128,14 @@ async fn ws_server(frames: Vec<String>, ending: Ending) -> (String, JoinHandle<S
 }
 
 fn client_for(base_url: &str) -> ProtectClient {
+    client_with_keepalive(base_url, Some(Duration::from_secs(30)))
+}
+
+fn client_with_keepalive(base_url: &str, keepalive: Option<Duration>) -> ProtectClient {
     ProtectClient::builder()
         .base_url(base_url)
         .api_key(SecretString::from("test-key".to_string()))
+        .subscription_keepalive(keepalive)
         .build()
         .expect("client builds")
 }
@@ -319,4 +347,58 @@ async fn in_band_error_frame_maps_to_subscription_rejected() {
     sub.close()
         .await
         .expect("closing an already-closed subscription is a no-op");
+}
+
+#[tokio::test]
+async fn keepalive_pings_while_idle() {
+    let (base_url, server) =
+        ws_server(Vec::new(), Ending::CountPings(Duration::from_millis(400))).await;
+
+    let client = client_with_keepalive(&base_url, Some(Duration::from_millis(50)));
+    let mut sub = client.subscribe().devices().await.unwrap();
+    // The server answers every ping, so the subscription stays healthy
+    // until the server closes after 400ms.
+    let item = tokio::time::timeout(Duration::from_secs(5), sub.next())
+        .await
+        .expect("server closes within 5s");
+    assert!(item.is_none(), "expected a clean end, got {item:?}");
+
+    let pings = server.await.unwrap().pings;
+    assert!(pings >= 4, "expected a ping every 50ms, saw {pings}");
+}
+
+#[tokio::test]
+async fn keepalive_ends_a_silent_connection() {
+    let (base_url, _server) = ws_server(Vec::new(), Ending::Stall(Duration::from_secs(5))).await;
+
+    let client = client_with_keepalive(&base_url, Some(Duration::from_millis(50)));
+    let mut sub = client.subscribe().devices().await.unwrap();
+    let item = tokio::time::timeout(Duration::from_secs(2), sub.next())
+        .await
+        .expect("keepalive gives up well before the server does");
+    match item {
+        Some(Err(Error::WebSocket(message))) => assert!(message.contains("keepalive")),
+        other => panic!("expected a keepalive error, got {other:?}"),
+    }
+    assert!(sub.next().await.is_none());
+}
+
+#[tokio::test]
+async fn keepalive_disabled_waits_on_a_silent_connection() {
+    let (base_url, _server) = ws_server(Vec::new(), Ending::Stall(Duration::from_secs(5))).await;
+
+    let client = client_with_keepalive(&base_url, None);
+    let mut sub = client.subscribe().devices().await.unwrap();
+    let waited = tokio::time::timeout(Duration::from_millis(300), sub.next()).await;
+    assert!(waited.is_err(), "no keepalive means no error on silence");
+}
+
+#[test]
+fn zero_keepalive_is_rejected_at_build_time() {
+    let result = ProtectClient::builder()
+        .base_url("http://127.0.0.1:1")
+        .api_key(SecretString::from("test-key".to_string()))
+        .subscription_keepalive(Some(Duration::ZERO))
+        .build();
+    assert!(matches!(result, Err(Error::Other(_))));
 }

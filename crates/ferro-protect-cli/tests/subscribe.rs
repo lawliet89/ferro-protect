@@ -162,3 +162,47 @@ async fn subscribe_refused_upgrade_reports_error_and_nonzero_exit() {
         .stderr(predicate::str::contains("401"))
         .stderr(predicate::str::contains("unauthorized"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscribe_reconnect_gives_up_after_max_attempts() {
+    // One connection, then the listener is gone. With --reconnect the
+    // CLI waits the 8s initial backoff, fails one attempt (connection
+    // refused), and exits explaining why.
+    let base_url = ws_server("/v1/subscribe/devices", &[DEVICE_REMOVE]).await;
+    let assert = run_cmd(
+        base_url,
+        &["subscribe", "devices", "--reconnect", "--max-attempts", "1"],
+    )
+    .await;
+
+    let lines = stdout_lines(&assert);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["type"], "remove");
+    assert
+        .failure()
+        .stderr(predicate::str::contains("gave up reconnecting"))
+        .stderr(predicate::str::contains("reconnecting in 8s"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscribe_max_attempts_requires_reconnect() {
+    let assert = run_cmd(
+        "http://127.0.0.1:1".to_string(),
+        &["subscribe", "events", "--max-attempts", "2"],
+    )
+    .await;
+
+    assert
+        .failure()
+        .stderr(predicate::str::contains("--reconnect"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscribe_keepalive_can_be_disabled() {
+    let base_url = ws_server("/v1/subscribe/events", &[EVENT_ADD]).await;
+    let assert = run_cmd(base_url, &["subscribe", "events", "--keepalive=false"]).await;
+
+    let lines = stdout_lines(&assert);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["item"]["type"], "smartDetectZone");
+}

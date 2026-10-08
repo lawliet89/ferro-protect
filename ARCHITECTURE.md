@@ -187,7 +187,7 @@ The current state. Updated whenever the structure changes.
 
 | Path | What |
 |---|---|
-| [Cargo.toml](crates/ferro-protect/Cargo.toml) | Library manifest. `[features] insecure-tls = []` for opt-in insecure TLS. |
+| [Cargo.toml](crates/ferro-protect/Cargo.toml) | Library manifest. `[features]`: `insecure-tls` for opt-in insecure TLS, `reconnect` for reconnecting subscriptions. |
 | [build.rs](crates/ferro-protect/build.rs) | Codegen entry point. Holds `SPEC_VERSION`. Delegates rewrite to `build_support/spec_rewrite.rs`. |
 | [build_support/spec_rewrite.rs](crates/ferro-protect/build_support/spec_rewrite.rs) | Pure schema preprocessing pipeline. `pub fn rewrite(serde_json::Value) -> serde_json::Value`. |
 | [src/lib.rs](crates/ferro-protect/src/lib.rs) | Crate root. Module declarations, public re-exports, quickstart doctest. |
@@ -201,9 +201,11 @@ The current state. Updated whenever the structure changes.
 | [src/cameras.rs](crates/ferro-protect/src/cameras.rs) | `CamerasApi<'a>` (list + get). Sample of the per-entity wrapper pattern phase 4 rolls out. |
 | [src/chimes.rs](crates/ferro-protect/src/chimes.rs) | `ChimesApi<'a>` (list + get). Same shape as cameras. |
 | [src/files.rs](crates/ferro-protect/src/files.rs) | `FilesApi<'a>` (list by `AssetFileType`). Upload lands in phase 10. |
-| [src/ws.rs](crates/ferro-protect/src/ws.rs) | `SubscribeApi<'a>` (devices + events) and `Subscription<T>`, a `Stream` of decoded WebSocket messages. See [WebSocket subscriptions](#websocket-subscriptions). |
+| [src/ws/mod.rs](crates/ferro-protect/src/ws/mod.rs) | `SubscribeApi<'a>` (devices + events) and `Subscription<T>`, a `Stream` of decoded WebSocket messages with keepalive pings. See [WebSocket subscriptions](#websocket-subscriptions). |
+| [src/ws/reconnect.rs](crates/ferro-protect/src/ws/reconnect.rs) | `ReconnectingSubscription<T>` and `ReconnectConfig` (behind the `reconnect` feature): reconnects with exponential backoff. |
 | [tests/info.rs](crates/ferro-protect/tests/info.rs) | Mocked integration test for `client.info()` (wiremock). |
 | [tests/subscribe.rs](crates/ferro-protect/tests/subscribe.rs) | Subscription tests against a one-connection `tokio-tungstenite` server (wiremock cannot complete an upgrade), plus a wiremock 401 for the refused upgrade. |
+| [tests/reconnect.rs](crates/ferro-protect/tests/reconnect.rs) | Reconnecting subscriptions against a server that plays one script per connection (drop, close, refuse, 401). |
 | [tests/rate_limit.rs](crates/ferro-protect/tests/rate_limit.rs) | Mocked integration test for the retry middleware (Retry-After honoured, retry budget exhaustion) and proactive throttle (burst capped to configured capacity). |
 | [tests/live.rs](crates/ferro-protect/tests/live.rs) | Live tests against a real NVR. Auto-skip when env absent. |
 | [tests/common/mod.rs](crates/ferro-protect/tests/common/mod.rs) | `live_client() -> Option<ProtectClient>`, `mutations_allowed() -> bool`. Pulled in by each live test via `mod common;`. |
@@ -322,7 +324,7 @@ regardless of what the server says. The custom middleware in
 
 ## WebSocket subscriptions
 
-[`src/ws.rs`](crates/ferro-protect/src/ws.rs) serves
+[`src/ws/`](crates/ferro-protect/src/ws/) serves
 `/v1/subscribe/devices` and `/v1/subscribe/events`.
 
 - **Handshake through reqwest.** The upgrade is an ordinary GET on
@@ -349,6 +351,16 @@ regardless of what the server says. The custom middleware in
   yields one `Err(Error::WebSocket)` and ends it; a server close ends
   it cleanly. `Subscription::close` sends a close frame and waits up to
   5 seconds for the echo.
+- **Keepalive (default on).** An idle subscription was observed being
+  reset without a close handshake, so a subscription pings every 30 s
+  (`ProtectClientBuilder::subscription_keepalive`) and ends with
+  `Error::WebSocket` after two intervals with no frame at all. A dead
+  connection therefore surfaces instead of hanging.
+- **Reconnect (`reconnect` feature).** `ReconnectingSubscription` wraps
+  the above in a state machine (connected / waiting / connecting) with
+  8 s → 120 s exponential backoff. Every disconnect is yielded as one
+  `Err` so consumers know messages may have been missed (Protect does
+  not replay); a permanent 4xx or exhausted `max_attempts` ends it.
 
 ---
 

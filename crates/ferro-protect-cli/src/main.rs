@@ -267,6 +267,13 @@ async fn run(cli: Cli) -> Result<()> {
     if resolved.insecure {
         builder = builder.tls(TlsMode::AcceptInvalid);
     }
+    let keepalive = match &cli.command {
+        Command::Subscribe { action } => action.args().keepalive,
+        _ => true,
+    };
+    if !keepalive {
+        builder = builder.subscription_keepalive(None);
+    }
     let client = builder.build().context("failed to construct client")?;
 
     let json = resolved.json;

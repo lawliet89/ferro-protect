@@ -15,19 +15,35 @@
 //! Protect sends one JSON document per text frame. Binary frames are
 //! not expected but are decoded the same way rather than dropped.
 //! Ping/pong is answered by tungstenite and never surfaces here.
+//!
+//! # Keepalive
+//!
+//! A quiet NVR can leave a subscription without traffic for a long
+//! time, and an idle connection was observed being reset without a
+//! close handshake. By default a [`Subscription`] therefore pings
+//! every 30 seconds, and treats two intervals without any frame
+//! (pongs included) as a dead connection. Configure it with
+//! [`ProtectClientBuilder::subscription_keepalive`](crate::ProtectClientBuilder::subscription_keepalive).
+
+#[cfg(feature = "reconnect")]
+mod reconnect;
+
+#[cfg(feature = "reconnect")]
+pub use reconnect::{ReconnectConfig, ReconnectingSubscription};
 
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
-use futures_util::{Stream, StreamExt};
+use futures_util::{SinkExt, Stream, StreamExt};
 use log::{debug, info, warn};
 use reqwest::StatusCode;
 use reqwest::header::{
     CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE,
 };
 use serde::de::DeserializeOwned;
+use tokio::time::{Instant, Interval, MissedTickBehavior};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -59,13 +75,40 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// frame yields `Err(Error::SubscriptionRejected)`, after which the
 /// stream ends.
 ///
+/// With keepalive on (the default), the subscription pings the server
+/// on a fixed interval while it is being polled. If two intervals pass
+/// without any frame from the server, it yields
+/// `Err(Error::WebSocket)` and ends, rather than waiting forever on a
+/// dead connection.
+///
 /// Dropping a `Subscription` drops the connection without a close
 /// handshake; call [`Self::close`] to disconnect cleanly.
 pub struct Subscription<T> {
     socket: WebSocketStream<reqwest::Upgraded>,
     path: &'static str,
     done: bool,
+    keepalive: Option<Keepalive>,
     _message: PhantomData<fn() -> T>,
+}
+
+struct Keepalive {
+    interval: Interval,
+    period: Duration,
+    last_seen: Instant,
+    flush_pending: bool,
+}
+
+impl Keepalive {
+    fn new(period: Duration) -> Self {
+        let mut interval = tokio::time::interval_at(Instant::now() + period, period);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        Self {
+            interval,
+            period,
+            last_seen: Instant::now(),
+            flush_pending: false,
+        }
+    }
 }
 
 impl<T> Subscription<T> {
@@ -108,7 +151,15 @@ impl<T: DeserializeOwned> Stream for Subscription<T> {
             if this.done {
                 return Poll::Ready(None);
             }
-            let decoded = match ready!(this.socket.poll_next_unpin(cx)) {
+            if let Err(e) = this.poll_keepalive(cx) {
+                this.done = true;
+                return Poll::Ready(Some(Err(e)));
+            }
+            let frame = ready!(this.socket.poll_next_unpin(cx));
+            if let (Some(Ok(_)), Some(keepalive)) = (&frame, &mut this.keepalive) {
+                keepalive.last_seen = Instant::now();
+            }
+            let decoded = match frame {
                 Some(Ok(Message::Text(text))) => decode(this.path, text.as_bytes()),
                 Some(Ok(Message::Binary(bytes))) => {
                     debug!("{}: binary frame ({} bytes)", this.path, bytes.len());
@@ -135,6 +186,49 @@ impl<T: DeserializeOwned> Stream for Subscription<T> {
     }
 }
 
+impl<T> Subscription<T> {
+    /// Drive the keepalive: send a ping on each tick, finish any
+    /// unflushed ping, and fail once the server has been silent for two
+    /// intervals. Polling the interval to `Pending` registers the waker
+    /// for the next tick.
+    fn poll_keepalive(&mut self, cx: &mut Context<'_>) -> Result<()> {
+        let Some(keepalive) = &mut self.keepalive else {
+            return Ok(());
+        };
+        while keepalive.interval.poll_tick(cx).is_ready() {
+            let silent_for = keepalive.last_seen.elapsed();
+            if silent_for >= keepalive.period * 2 {
+                warn!(
+                    "{}: no frames for {silent_for:?}; connection presumed dead",
+                    self.path
+                );
+                return Err(Error::WebSocket(format!(
+                    "keepalive: no frames from the server for {silent_for:?}"
+                )));
+            }
+            match self.socket.poll_ready_unpin(cx) {
+                Poll::Ready(Ok(())) => {
+                    self.socket
+                        .start_send_unpin(Message::Ping(bytes::Bytes::new()))?;
+                    keepalive.flush_pending = true;
+                    debug!("{}: keepalive ping", self.path);
+                }
+                Poll::Ready(Err(e)) => return Err(e.into()),
+                // A previous write is still in flight; skip this ping.
+                Poll::Pending => {}
+            }
+        }
+        if keepalive.flush_pending {
+            match self.socket.poll_flush_unpin(cx) {
+                Poll::Ready(Ok(())) => keepalive.flush_pending = false,
+                Poll::Ready(Err(e)) => return Err(e.into()),
+                Poll::Pending => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Decode one frame as `T`, falling back to Protect's error document
 /// shape before reporting a schema mismatch.
 fn decode<T: DeserializeOwned>(path: &str, frame: &[u8]) -> Result<T> {
@@ -153,7 +247,7 @@ fn decode<T: DeserializeOwned>(path: &str, frame: &[u8]) -> Result<T> {
 /// WebSocket subscription entry point. Cheap to construct; holds a
 /// borrow of the [`ProtectClient`] that issued it.
 pub struct SubscribeApi<'a> {
-    client: &'a ProtectClient,
+    pub(super) client: &'a ProtectClient,
 }
 
 impl<'a> SubscribeApi<'a> {
@@ -228,6 +322,7 @@ impl ProtectClient {
             socket,
             path,
             done: false,
+            keepalive: self.subscription_keepalive.map(Keepalive::new),
             _message: PhantomData,
         })
     }

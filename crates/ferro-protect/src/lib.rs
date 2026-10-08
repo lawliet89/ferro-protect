@@ -62,4 +62,6 @@ pub use nvrs::NvrsApi;
 pub use rate_limit::RateLimitConfig;
 pub use sensors::SensorsApi;
 pub use viewers::ViewersApi;
+#[cfg(feature = "reconnect")]
+pub use ws::{ReconnectConfig, ReconnectingSubscription};
 pub use ws::{SubscribeApi, Subscription};
