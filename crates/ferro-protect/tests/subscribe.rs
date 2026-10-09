@@ -63,6 +63,9 @@ enum Ending {
     CountPings(Duration),
     /// Hold the connection without reading, so pings go unanswered.
     Stall(Duration),
+    /// Send a close frame, then hold the connection open without
+    /// reading for this long before dropping it.
+    CloseThenStall(Duration),
 }
 
 /// Accept one WebSocket connection, send `frames` as text messages,
@@ -108,6 +111,11 @@ async fn ws_server(frames: Vec<String>, ending: Ending) -> (String, JoinHandle<S
                 while ws.next().await.is_some() {}
             }
             Ending::Stall(duration) => {
+                tokio::time::sleep(duration).await;
+                drop(ws);
+            }
+            Ending::CloseThenStall(duration) => {
+                ws.close(None).await.expect("close");
                 tokio::time::sleep(duration).await;
                 drop(ws);
             }
@@ -401,4 +409,23 @@ fn zero_keepalive_is_rejected_at_build_time() {
         .subscription_keepalive(Some(Duration::ZERO))
         .build();
     assert!(matches!(result, Err(Error::Other(_))));
+}
+
+#[tokio::test]
+async fn keepalive_stops_once_the_server_closes() {
+    // After the server's close frame the client waits for the TCP
+    // connection to end. Keepalive ticks in that window must not try to
+    // ping a closing socket, which tungstenite rejects as an error.
+    let (base_url, _server) = ws_server(
+        Vec::new(),
+        Ending::CloseThenStall(Duration::from_millis(300)),
+    )
+    .await;
+
+    let client = client_with_keepalive(&base_url, Some(Duration::from_millis(20)));
+    let mut sub = client.subscribe().devices().await.unwrap();
+    let item = tokio::time::timeout(Duration::from_secs(5), sub.next())
+        .await
+        .expect("stream ends within 5s");
+    assert!(item.is_none(), "expected a clean end, got {item:?}");
 }

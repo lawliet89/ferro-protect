@@ -169,7 +169,11 @@ impl<T: DeserializeOwned> Stream for Subscription<T> {
                 Some(Ok(Message::Close(frame))) => {
                     // Keep polling: tungstenite flushes its close reply on
                     // the next read and then reports the end of the stream.
+                    // Stop the keepalive first: a ping on a closing socket
+                    // is a protocol error that would turn this clean close
+                    // into a failure.
                     info!("{}: server closed the subscription: {frame:?}", this.path);
+                    this.keepalive = None;
                     continue;
                 }
                 Some(Err(e)) => {
