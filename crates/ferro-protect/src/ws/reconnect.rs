@@ -105,6 +105,15 @@ impl<T: DeserializeOwned + 'static> ReconnectingSubscription<T> {
         })
     }
 
+    /// Whether `max_attempts` consecutive attempts have been made. The
+    /// count is reset by a message or a long-lived connection, so the
+    /// initial connection (attempt 0) never counts.
+    fn attempts_exhausted(&self) -> bool {
+        self.config
+            .max_attempts
+            .is_some_and(|max| self.attempt >= max.get())
+    }
+
     /// Schedule the next attempt and return how long it will wait.
     fn disconnected(&mut self, healthy: bool) -> Duration {
         if healthy {
@@ -158,6 +167,14 @@ impl<T: DeserializeOwned + 'static> Stream for ReconnectingSubscription<T> {
                         Some(Err(e)) => e,
                         None => Error::WebSocket("server closed the subscription".into()),
                     };
+                    // A reconnect that upgraded but then ended without
+                    // delivering a message (e.g. rejected in-band for rate
+                    // limiting) counts as a failed attempt.
+                    if !healthy && this.attempts_exhausted() {
+                        warn!("{}: giving up reconnecting: {error}", this.path);
+                        this.state = State::Done;
+                        return Poll::Ready(Some(Err(error)));
+                    }
                     let delay = this.disconnected(healthy);
                     warn!(
                         "{}: subscription interrupted: {error}; reconnecting in {delay:?}",
@@ -180,11 +197,7 @@ impl<T: DeserializeOwned + 'static> Stream for ReconnectingSubscription<T> {
                         };
                     }
                     Err(e) => {
-                        let exhausted = this
-                            .config
-                            .max_attempts
-                            .is_some_and(|max| this.attempt >= max.get());
-                        if is_permanent(&e) || exhausted {
+                        if is_permanent(&e) || this.attempts_exhausted() {
                             warn!("{}: giving up reconnecting: {e}", this.path);
                             this.state = State::Done;
                             return Poll::Ready(Some(Err(e)));

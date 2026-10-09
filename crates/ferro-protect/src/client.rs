@@ -350,7 +350,10 @@ impl ProtectClientBuilder {
     ///   failures, or a zero subscription keepalive period.
     /// - [`Error::Http`] for `reqwest` builder failures.
     pub fn build(self) -> Result<ProtectClient> {
-        let subscription_keepalive = self.resolved_subscription_keepalive()?;
+        let subscription_keepalive = resolve_subscription_keepalive(
+            self.subscription_keepalive_overridden,
+            self.subscription_keepalive,
+        )?;
         let api_key = self.api_key.ok_or(Error::MissingApiKey)?;
         let base_url_raw = match (self.base_url, self.host) {
             (Some(url), _) => url,
@@ -472,20 +475,24 @@ impl ProtectClientBuilder {
     }
 }
 
-impl ProtectClientBuilder {
-    fn resolved_subscription_keepalive(&self) -> Result<Option<Duration>> {
-        let keepalive = if self.subscription_keepalive_overridden {
-            self.subscription_keepalive
-        } else {
-            Some(DEFAULT_SUBSCRIPTION_KEEPALIVE)
-        };
-        if keepalive == Some(Duration::ZERO) {
-            return Err(Error::Other(
-                "subscription keepalive period must be non-zero; pass None to disable".into(),
-            ));
-        }
-        Ok(keepalive)
+/// Apply the keepalive default and reject a zero period. Takes the two
+/// fields rather than the builder so nothing derived from the builder's
+/// API key flows into the value `build` logs.
+fn resolve_subscription_keepalive(
+    overridden: bool,
+    period: Option<Duration>,
+) -> Result<Option<Duration>> {
+    let keepalive = if overridden {
+        period
+    } else {
+        Some(DEFAULT_SUBSCRIPTION_KEEPALIVE)
+    };
+    if keepalive == Some(Duration::ZERO) {
+        return Err(Error::Other(
+            "subscription keepalive period must be non-zero; pass None to disable".into(),
+        ));
     }
+    Ok(keepalive)
 }
 
 fn parse_base_url(raw: &str) -> Result<Url> {

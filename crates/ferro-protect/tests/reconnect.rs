@@ -24,6 +24,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 const REMOVE_A: &str =
     r#"{"item":{"id":"672094f900e26303e800062a","modelKey":"light"},"type":"remove"}"#;
+const RATE_LIMITED: &str =
+    r#"{"error":"Too many requests","limit":10,"name":"TOO_MANY_REQUESTS_ERROR","windowMs":1000}"#;
 const REMOVE_B: &str =
     r#"{"item":{"id":"672094f900e26303e800062b","modelKey":"light"},"type":"remove"}"#;
 
@@ -192,4 +194,43 @@ async fn first_connection_failure_is_returned_directly() {
         .events_reconnecting(ReconnectConfig::default())
         .await;
     assert!(matches!(result, Err(Error::Api { status: 401, .. })));
+}
+
+#[tokio::test]
+async fn max_attempts_counts_reconnects_rejected_in_band() {
+    // After the first drop, every reconnect upgrades and is then
+    // rejected in-band. Those count as failed attempts, so with
+    // max_attempts = 2 the stream ends after the second rejection
+    // instead of making a third (here: refused) attempt.
+    let (base_url, _) = server(
+        vec![
+            Script::SendThenDrop(REMOVE_A),
+            Script::SendThenClose(RATE_LIMITED),
+            Script::SendThenClose(RATE_LIMITED),
+        ],
+        Afterwards::Refuse,
+    )
+    .await;
+
+    let client = client_for(&base_url);
+    let mut sub = client
+        .subscribe()
+        .devices_reconnecting(fast_config(Some(2)))
+        .await
+        .expect("first connection succeeds");
+
+    assert_eq!(removed_id(next(&mut sub).await), "672094f900e26303e800062a");
+    assert!(matches!(
+        next(&mut sub).await,
+        Some(Err(Error::WebSocket(_)))
+    ));
+    for _ in 0..2 {
+        match next(&mut sub).await {
+            Some(Err(Error::SubscriptionRejected { code, .. })) => {
+                assert_eq!(code, "TOO_MANY_REQUESTS_ERROR");
+            }
+            other => panic!("expected an in-band rejection, got {other:?}"),
+        }
+    }
+    assert!(next(&mut sub).await.is_none());
 }
