@@ -34,6 +34,20 @@ pub enum Error {
     #[error("Failed to deserialize response: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// The server accepted a WebSocket subscription, then sent an error
+    /// document instead of a message and closed the connection. `code`
+    /// is the API's symbolic error name (e.g.
+    /// `"TOO_MANY_REQUESTS_ERROR"`) and `message` its human-readable
+    /// text. There is no HTTP status: the upgrade itself returned 101.
+    #[error("Subscription rejected ({code}): {message}")]
+    SubscriptionRejected { code: String, message: String },
+
+    /// WebSocket transport or protocol failure on a subscription. The
+    /// underlying `tungstenite` error is rendered to a string so its
+    /// type does not leak into this crate's public API.
+    #[error("WebSocket error: {0}")]
+    WebSocket(String),
+
     /// A URL passed to or constructed by the client was not valid.
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
@@ -68,6 +82,16 @@ impl Error {
         }
     }
 
+    /// Recognise an error document sent as a WebSocket frame. `None`
+    /// when the frame does not have Protect's error shape.
+    pub(crate) fn from_rejection_frame(frame: &[u8]) -> Option<Self> {
+        let body: ApiErrorBody = serde_json::from_slice(frame).ok()?;
+        Some(Self::SubscriptionRejected {
+            code: body.name.clone(),
+            message: body.message(),
+        })
+    }
+
     fn api(status: StatusCode, code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Api {
             status: status.as_u16(),
@@ -83,6 +107,12 @@ impl From<reqwest_middleware::Error> for Error {
             reqwest_middleware::Error::Reqwest(e) => Self::Http(e),
             reqwest_middleware::Error::Middleware(e) => Self::Middleware(e.to_string()),
         }
+    }
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for Error {
+    fn from(err: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::WebSocket(err.to_string())
     }
 }
 

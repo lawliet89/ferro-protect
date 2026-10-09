@@ -1118,6 +1118,45 @@ Scheduled the new POS transaction endpoint in PLAN.md.
 **Next**: Phase 6 (files list). Its first commit should also backfill the
 missing Phase 5 entry in this log.
 
+## 2026-10-07 09:40 +0800 — Phase 6: files list
+
+**Status**: complete (entry written 2026-10-08 at the start of phase 7,
+per the commit-timing rule, from the PR #15 description)
+
+**Summary**:
+Read half of device asset file management, merged as `0d659ca` (#15).
+`client.files().list(AssetFileType::Animations)` returns
+`Vec<AssetFile>` (`GET /v1/files/{fileType}`); the spec's `fileSchema`
+is re-exported as `models::AssetFile`. CLI: `ferro-protect files list
+animations` prints a table, or JSON with `--json`. Live-tested against
+a 7.3.70 NVR (18/18 live tests). The same PR backfilled the missing
+Phase 5 entry.
+
+**Files added/changed**:
+- `crates/ferro-protect/src/files.rs`, `src/lib.rs`, `src/models.rs`
+- `crates/ferro-protect-cli/src/commands/{files.rs,mod.rs}`, `src/main.rs`
+- `crates/ferro-protect/tests/{files.rs,live.rs}`,
+  `tests/fixtures/files_list_ok.json`
+- `crates/ferro-protect-cli/tests/files.rs`
+- `ARCHITECTURE.md` (`files.rs` row)
+
+**Decisions / deviations**:
+- **`fileType` is an enum, not a string.** A 7.3.70 NVR answers an
+  unknown `fileType` with `200 []`, so a typo would look like "no
+  files". The library takes `AssetFileType` and the CLI uses a
+  `ValueEnum`, so bad values are rejected before any request. Only
+  `animations` exists today.
+- **Undeclared response fields are dropped.** The live NVR also returns
+  `id`, `size`, `createdAt`, `updatedAt`, and `metadata`. The fixture
+  keeps them to prove they are tolerated; `--json` emits only the four
+  spec fields, like other entities.
+- **No download endpoint.** The integration API can list and upload
+  these files but not fetch their bytes. `path` is a location on the
+  NVR's disk, and guessed `GET /v1/files/animations/{name|id}` paths
+  return 404.
+
+**Next**: Phase 7 (WebSocket subscriptions).
+
 ## 2026-10-08 21:27 +0800 — Chore: keep secrets out of CI guard logs; insecure TLS opt-in
 
 **Status**: complete

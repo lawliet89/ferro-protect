@@ -16,9 +16,10 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 pub use crate::generated::{
-    AssetFileType, Camera, CameraId, ChannelQuality, Chime, ChimeId, DeviceState, Light, LightId,
-    Liveview, LiveviewId, Nvr, NvrId, ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer,
-    ViewerId,
+    AssetFileType, Camera, CameraId, ChannelQuality, Chime, ChimeId, Device, DeviceBulk,
+    DeviceBulkPartialWithReference, DeviceBulkReference, DeviceId, DevicePartialWithReference,
+    DeviceReference, DeviceState, Event, EventId, Light, LightId, Liveview, LiveviewId, Nvr, NvrId,
+    ProtectVersion, Sensor, SensorId, SnapshotChannel, Viewer, ViewerId,
 };
 
 /// A device asset file (e.g. a doorbell animation), as returned by
@@ -78,6 +79,70 @@ pub struct TalkbackSession {
 pub struct RtspsStream {
     pub quality: ChannelQuality,
     pub url: String,
+}
+
+/// One message from `/v1/subscribe/devices`, as yielded by
+/// [`crate::SubscribeApi::devices`].
+///
+/// The wire shape is `{"type": "add" | "update" | "remove", "item": ...}`.
+/// The spec's `deviceEvent` schema is an `anyOf` over two `type`-tagged
+/// `oneOf`s (single-device and bulk) that typify cannot turn into a
+/// usable enum, so this tagged enum is hand-written; the item types
+/// are the generated ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum DeviceMessage {
+    /// A device was adopted.
+    Add { item: DeviceAdded },
+    /// Some of a device's fields changed. The item carries `id`,
+    /// `modelKey`, and only the fields that changed.
+    Update { item: DeviceUpdated },
+    /// A device was removed.
+    Remove { item: DeviceRemoved },
+}
+
+/// Payload of [`DeviceMessage::Add`].
+///
+/// `Bulk` covers the spec's `devicesAdd` form, whose `id` may be an
+/// array of ids. Decoding tries `One` first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DeviceAdded {
+    One(Device),
+    Bulk(DeviceBulk),
+}
+
+/// Payload of [`DeviceMessage::Update`]. See [`DeviceAdded`] for
+/// `One` versus `Bulk`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DeviceUpdated {
+    One(DevicePartialWithReference),
+    Bulk(DeviceBulkPartialWithReference),
+}
+
+/// Payload of [`DeviceMessage::Remove`]. See [`DeviceAdded`] for
+/// `One` versus `Bulk`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DeviceRemoved {
+    One(DeviceReference),
+    Bulk(DeviceBulkReference),
+}
+
+/// One message from `/v1/subscribe/events`, as yielded by
+/// [`crate::SubscribeApi::events`].
+///
+/// Hand-written for the same reason as [`DeviceMessage`]: the spec
+/// declares this `oneOf` inline on the operation, not as a component
+/// schema, so typify never sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum EventMessage {
+    /// An event started (motion detected, doorbell rung, ...).
+    Add { item: Event },
+    /// An existing event changed, typically gaining its `end` time.
+    Update { item: Event },
 }
 
 /// Application metadata returned by `GET /v1/meta/info`.
