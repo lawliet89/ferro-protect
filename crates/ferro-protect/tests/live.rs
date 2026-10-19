@@ -478,3 +478,67 @@ async fn live_read_files_list() {
         println!("  - {} ({})", f.name.as_str(), f.path.as_str());
     }
 }
+
+/// Shared body of the `live_read_subscribe_*` tests. The handshake is
+/// the assertion: message content depends on NVR activity, so the test
+/// waits briefly for either one message or silence, then closes. A
+/// message that arrives but fails to decode still fails the test,
+/// since that is schema drift worth knowing about.
+///
+/// Protect rate-limits subscriptions in-band (101, then a
+/// `TOO_MANY_REQUESTS_ERROR` frame), which the HTTP retry middleware
+/// cannot see. The rest of this file runs in parallel against the same
+/// budget, so a rejection is retried a few times after a pause.
+async fn subscribe_wait_briefly_then_close<T, F, Fut>(name: &str, open: F)
+where
+    T: std::fmt::Debug + serde::de::DeserializeOwned,
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = ferro_protect::Result<ferro_protect::Subscription<T>>>,
+{
+    use futures_util::StreamExt;
+    use std::time::Duration;
+
+    for attempt in 1..=5 {
+        let mut sub = open().await.expect("subscription handshake succeeded");
+        match tokio::time::timeout(Duration::from_secs(5), sub.next()).await {
+            Ok(Some(Err(ferro_protect::Error::SubscriptionRejected { code, .. })))
+                if code == "TOO_MANY_REQUESTS_ERROR" =>
+            {
+                println!("{name}: rate-limited on attempt {attempt}, retrying");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            Ok(Some(Ok(msg))) => println!("{name}: first message: {msg:?}"),
+            Ok(Some(Err(e))) => panic!("{name}: subscription error: {e}"),
+            Ok(None) => panic!("{name}: server closed the subscription immediately"),
+            Err(_) => println!("{name}: no messages within 5s (idle NVR)"),
+        }
+        sub.close().await.expect("subscription closes cleanly");
+        return;
+    }
+    panic!("{name}: still rate-limited after 5 attempts");
+}
+
+#[tokio::test]
+async fn live_read_subscribe_devices() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_subscribe_devices: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    subscribe_wait_briefly_then_close("live_read_subscribe_devices", || async {
+        client.subscribe().devices().await
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn live_read_subscribe_events() {
+    let Some(client) = common::live_client() else {
+        println!("(skipping live_read_subscribe_events: UNIFI_PROTECT_HOST not set)");
+        return;
+    };
+    subscribe_wait_briefly_then_close("live_read_subscribe_events", || async {
+        client.subscribe().events().await
+    })
+    .await;
+}

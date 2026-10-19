@@ -1,0 +1,4 @@
+{"item":{"cameraIds":["65b75b9103132403e40004bf"],"id":"65b8a9fd02592403e4001e64","modelKey":"chime"},"type":"update"}
+{"item":{"id":"66d025b301ebc903e80003ea","modelKey":"camera","state":"DISCONNECTED"},"type":"update"}
+{"item":{"id":"672094f900e26303e800062a","modelKey":"light"},"type":"remove"}
+{"item":{"id":["66d025b301ebc903e80003eb","66d025b301ebc903e80003ec"],"modelKey":"sensor"},"type":"remove"}

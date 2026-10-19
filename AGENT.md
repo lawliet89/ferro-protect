@@ -140,8 +140,10 @@ The user has commit signing configured and may require a passphrase.
   2. Tell the user the GPG cache likely needs warming. The user's
      standard warm-up command is:
      ```sh
-     echo unlock | gpg --clearsign --local-user 77820C080DD7DFC5 > /dev/null
+     echo unlock | gpg --clearsign --local-user "$(git config user.signingkey)" > /dev/null
      ```
+     The key differs per machine, so it is read from git config rather
+     than hardcoded here.
   3. Note the staged files and the exact commit message, so the user
      can either tell you "done, retry" or run it themselves.
   4. Wait. Do not proceed past the commit.
